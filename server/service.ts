@@ -1171,13 +1171,21 @@ export class Service {
       };
     }
 
+    const adapter = this.adapters[other];
+    let model: string | undefined;
+    if (adapter.ownsModel) {
+      const models = (await paseo.providers.listModels(provider)).models ?? [];
+      model = [models.find((entry) => entry.isDefault), ...models].find((entry) => entry && adapter.ownsModel?.(entry.id))?.id;
+      if (!model) return { skipped: `${FAMILY_CLI[other]} has no ${name} model to continue on.` };
+    }
+
     const fork = await continueInNewAgent({
       paseo,
       sourceAgentId: agentId,
       timeline,
       why: source === "auto" ? `every ${FAMILY_LABEL[family]} account reached its usage limit` : `the work was moved to ${name}`,
       previous: FAMILY_CLI[family],
-      target: { provider, label: name, modeId },
+      target: { provider, label: name, modeId, ...(model ? { model } : {}) },
       bind: async (newAgentId) => {
         await this.store.update((draft) => {
           draft.bindings[newAgentId] = {
