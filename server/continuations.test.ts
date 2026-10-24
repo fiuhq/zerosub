@@ -107,7 +107,7 @@ async function setup() {
     environmentWarning: () => null, env: async (home: string) => ({ CODEX_HOME: home }), prepareHome: async () => {},
     redeemReset: async () => ({ outcome: "reset", message: "Synthetic reset", left: 0 }),
   } as unknown as FamilyAdapter;
-  const service = () => new Service({ codex: adapter, claude: adapter }, store, { resolve: async () => ({ codex: "codex" }) } as unknown as FamilyResolver);
+  const service = () => new Service({ codex: adapter, claude: adapter, kimi: adapter }, store, { resolve: async () => ({ codex: "codex" }) } as unknown as FamilyResolver);
   const restart = () => { store = new StateStore(path); return new CodexContinuations(store); };
   return { path, get store() { return store; }, accounts, agents, addAgent, timelines, epochs, add, created, sent, notes, create, send, refetch, paseo, switchTo, manager, service, restart };
 }

@@ -108,6 +108,32 @@ export function detectCodexSignOut(event: TurnEvent): string | null {
   return null;
 }
 
+/**
+ * Kimi Code's own quota-exhausted wording (its `exceeded_current_quota_error` and Moonshot's billing
+ * messages), deliberately without a bare "quota" or "balance", which throttle messages share.
+ */
+const KIMI_QUOTA = /exceeded_current_quota_error|exceeded your current (?:token )?quota/i;
+const KIMI_BALANCE = /check your account balance|insufficient balance|recharge your account|please recharge|account (?:is )?in arrears/i;
+/** A throttle or a full plan window; only a usage reading can tell them apart. */
+const KIMI_THROTTLE = /\b429\b|rate[_ ]limit|too many requests/i;
+const KIMI_SIGNED_OUT =
+  /auth\.(?:login_required|token_unauthorized|token_missing)|\bLogin required\b|re-login required|OAuth login expired|Provider credential (?:missing|unauthorized)/i;
+
+/** Read from errors only: an ordinary reply that mentions rate limits is not a limit. */
+export function detectKimiLimit(event: TurnEvent): LimitHit | null {
+  for (const text of notices(event, false)) {
+    if (KIMI_BALANCE.test(text)) return { message: firstLine(text), kind: "budget", resetsAt: null };
+    if (KIMI_QUOTA.test(text)) return { message: firstLine(text), kind: "window", resetsAt: null };
+    if (KIMI_THROTTLE.test(text)) return { message: firstLine(text), kind: "window", resetsAt: null, suspected: true };
+  }
+  return null;
+}
+
+export function detectKimiSignOut(event: TurnEvent): string | null {
+  for (const text of notices(event, false)) if (KIMI_SIGNED_OUT.test(text)) return firstLine(text);
+  return null;
+}
+
 // --------------------------------------------------------------------------- reset times
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];

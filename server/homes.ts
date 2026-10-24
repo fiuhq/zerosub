@@ -1,7 +1,7 @@
-import { lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, rmdir, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, rmdir, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join, sep } from "node:path";
-import { homesDir, mainClaudeDir, mainClaudeGlobalConfig, mainCodexHome } from "./paths";
+import { homesDir, mainClaudeDir, mainClaudeGlobalConfig, mainCodexHome, mainKimiHome } from "./paths";
 
 /**
  * A managed account home is a real directory holding that account's own credentials and account
@@ -349,4 +349,45 @@ export async function codexSqliteHome(): Promise<string | null> {
   // A `sqlite_home` in the (shared) config.toml already applies to every account.
   if (/^\s*sqlite_home\s*=/m.test(config)) return null;
   return mainCodexHome();
+}
+
+// --------------------------------------------------------------------------- Kimi Code
+
+/**
+ * Per-account entries in a Kimi Code home: the sign-in (`credentials`, and `config.toml`, which holds
+ * the managed OAuth reference), its region cache, the device id, the local server and its token, and
+ * caches. Sessions, MCP config, plugins, skills, workspaces and the install-channel `region` marker
+ * are shared, so an agent can move between accounts and keep its history.
+ */
+const KIMI_PRIVATE = new Set([
+  "credentials",
+  "config.toml",
+  "region.json",
+  "device_id",
+  "server",
+  "server.token",
+  "klient.sock",
+  "telemetry",
+  "logs",
+  "log",
+  "cache",
+  "updates",
+  "feedback-survey-state.json",
+]);
+
+function kimiPrivate(name: string): boolean {
+  return KIMI_PRIVATE.has(name) || isTemporary(name) || name.endsWith(".lock") || name.endsWith(".sock");
+}
+
+export async function prepareKimiHome(home: string, force = false): Promise<void> {
+  const last = lastSync.get(home);
+  if (!force && last && Date.now() - last < SYNC_TTL_MS) return;
+  const main = mainKimiHome();
+  await syncOverlay(home, { main, shareDirs: ["sessions", "plugins", "skills"], isPrivate: kimiPrivate });
+  // The account's own config.toml starts as a copy of main's settings, so a sign-in in this home
+  // follows main's region and model choices; from then on the CLI keeps it per account.
+  if (!(await exists(join(home, "config.toml"))) && (await exists(join(main, "config.toml")))) {
+    await copyFile(join(main, "config.toml"), join(home, "config.toml")).catch(() => undefined);
+  }
+  lastSync.set(home, Date.now());
 }

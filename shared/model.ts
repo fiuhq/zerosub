@@ -4,7 +4,7 @@ import { z } from "zod";
  * The subscription families this plugin manages, one adapter each. Custom provider profiles map onto
  * one of them. Adding a family means a value here, a row in each table below, and its adapter.
  */
-export const FamilySchema = z.enum(["claude", "codex"]);
+export const FamilySchema = z.enum(["claude", "codex", "kimi"]);
 export type Family = z.infer<typeof FamilySchema>;
 export const FAMILIES: readonly Family[] = FamilySchema.options;
 
@@ -12,18 +12,21 @@ export const FAMILIES: readonly Family[] = FamilySchema.options;
 export const FAMILY_LABEL: Record<Family, string> = {
   claude: "Claude",
   codex: "ChatGPT",
+  kimi: "Kimi",
 };
 
 /** Section headings on the Accounts screen. */
 export const FAMILY_HEADING: Record<Family, string> = {
   claude: "Claude",
   codex: "ChatGPT (Codex)",
+  kimi: "Kimi Code",
 };
 
 /** The CLI that signs in and runs the agents. */
 export const FAMILY_CLI: Record<Family, string> = {
   claude: "Claude Code",
   codex: "Codex",
+  kimi: "Kimi Code",
 };
 
 /**
@@ -33,23 +36,26 @@ export const FAMILY_CLI: Record<Family, string> = {
 export const FAMILY_PORTABLE: Record<Family, boolean> = {
   claude: true,
   codex: false,
+  kimi: true,
 };
 
 /**
  * How signing in works. `paste`: one link finishes by itself on the host and another shows a code to
  * paste back, both from the same flow. `switchable`: a browser callback or a device code typed on the
- * provider's page, each its own flow, so switching method starts a new one.
+ * provider's page, each its own flow, so switching method starts a new one. `device`: only a device
+ * code typed on the provider's page, from any device.
  */
-export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable"> = {
+export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable" | "device"> = {
   claude: "paste",
   codex: "switchable",
+  kimi: "device",
 };
 
 /**
  * Providers a stopped chat can carry on with when every account of its own is out, most preferred
  * first. The first that is installed and has a usable account takes over in a new agent.
  */
-export const FALLBACK_ORDER: readonly Family[] = ["claude", "codex"];
+export const FALLBACK_ORDER: readonly Family[] = ["claude", "codex", "kimi"];
 
 /** The providers a `from` agent can carry on with, most preferred first. */
 export function fallbackFamilies(from: Family): Family[] {

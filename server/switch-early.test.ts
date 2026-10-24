@@ -206,7 +206,7 @@ async function setUp(levels: Record<string, [number, number]>, state: Partial<St
   };
   const families = { resolve: async () => ({ claude: "claude" as const }) };
   const claude = adapter(levels, reads);
-  const service = new Service({ claude, codex: claude }, store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
+  const service = new Service({ claude, codex: claude, kimi: claude }, store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
   service.setPreferences(preferences.schema.parse(prefs));
   // Readings for the other accounts, as the background upkeep would have taken them.
   for (const id of Object.keys(levels)) await service.refreshUsage(id, true);

@@ -19,6 +19,7 @@ const OWN_AUTH_KEYS: Record<Family, readonly string[]> = {
     "CLAUDE_CODE_USE_FOUNDRY",
   ],
   codex: ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME", "OPENAI_BASE_URL"],
+  kimi: ["KIMI_CODE_HOME", "KIMI_CODE_BASE_URL", "KIMI_CODE_OAUTH_HOST", "KIMI_OAUTH_HOST"],
 };
 
 export function bringsOwnAuth(family: Family, env: Record<string, unknown> | undefined): boolean {

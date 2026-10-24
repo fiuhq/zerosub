@@ -478,11 +478,14 @@ export class Service {
     if (!family) return;
     const adapter = this.adapters[family];
     const agentId = event.agent.id;
+    const endedAt = Date.now();
     const accountId = this.runningOn(await this.store.read(), agentId, family);
-    if (accountId) this.activeAt.set(accountId, Date.now());
+    if (accountId) this.activeAt.set(accountId, endedAt);
     if (event.outcome.kind !== "canceled") {
       const hit = adapter.detectLimit(event);
-      if (hit) return this.handleUnavailable(context.paseo, agentId, family, event.timeline, { kind: "limit", hit });
+      if (hit && (!hit.suspected || (accountId !== undefined && (await this.confirmFull(accountId, endedAt))))) {
+        return this.handleUnavailable(context.paseo, agentId, family, event.timeline, { kind: "limit", hit });
+      }
       if (adapter.detectSignOut(event) && (await this.confirmSignedOut(agentId, family))) {
         return this.handleUnavailable(context.paseo, agentId, family, event.timeline, { kind: "signed_out" });
       }
@@ -502,6 +505,19 @@ export class Service {
     await this.store.update((draft) => {
       delete draft.sessions[agentId];
     });
+  }
+
+  /** A suspected limit is real only once a live reading taken after the turn ended shows one of the account's windows full. */
+  private async confirmFull(accountId: string, endedAt: number): Promise<boolean> {
+    await withTimeout(this.refreshUsage(accountId, true, false, false), 12_000);
+    const usage = this.usage.get(accountId);
+    return Boolean(
+      usage &&
+        !usage.cached &&
+        !usage.error &&
+        Date.parse(usage.fetchedAt) >= endedAt &&
+        usage.windows.some((window) => window.usedPercent >= 100),
+    );
   }
 
   /** Re-checks the account an agent was using; true when it really is signed out now. */
@@ -1077,7 +1093,7 @@ export class Service {
   }
 
   /**
-   * Carries an agent's work on in a new agent on the other provider (Claude ↔ ChatGPT), for when
+   * Carries an agent's work on in a new agent on another provider (Claude, ChatGPT, Kimi Code), for when
    * every account of its own provider is out. The new agent gets the conversation so far and a mode
    * no more permissive than the original's; the original stays as it was.
    */
@@ -1088,10 +1104,11 @@ export class Service {
     timeline: readonly AgentTimelineItem[] | undefined,
     source: "auto" | "user",
   ): Promise<{ fork: Continuation; account: StoredAccount; family: Family } | { skipped: string }> {
-    const candidates = fallbackFamilies(family);
-    if (candidates.length === 0) return { skipped: "No other provider is set up." };
     const families = await this.families.resolve(paseo);
     const state = await this.store.read();
+    // Only providers the user has accounts for; one that was never set up isn't a way out.
+    const candidates = fallbackFamilies(family).filter((other) => accountsOf(state, other).length > 0);
+    if (candidates.length === 0) return { skipped: "No other provider has an account here." };
     // Prompting the original again while it's still out mustn't start a second copy of the work,
     // whichever provider took it over.
     for (const agent of (await listAgents(paseo, false)).agents) {
@@ -1375,8 +1392,11 @@ export class Service {
 
   // ------------------------------------------------------------------ usage
 
-  /** `renewLogin` lets the CLI refresh an expired sign-in first (explicit refreshes only: it's slow). */
-  refreshUsage(accountId: string, force = false, renewLogin = false): Promise<void> {
+  /**
+   * `renewLogin` lets the CLI refresh an expired sign-in first (explicit refreshes only: it's slow).
+   * `spaced = false` skips the adapter's spacing for a check that needs a reading taken now.
+   */
+  refreshUsage(accountId: string, force = false, renewLogin = false, spaced = true): Promise<void> {
     const pending = this.usageInFlight.get(accountId);
     if (pending) return pending;
     const now = Date.now();
@@ -1387,7 +1407,7 @@ export class Service {
       const account = findAccount(await this.store.read(), accountId);
       if (!account) return;
       const spacing = this.adapters[account.family].usageSpacingMs;
-      if (since < (force ? spacing : Math.max(spacing, 60_000))) return;
+      if (spaced && since < (force ? spacing : Math.max(spacing, 60_000))) return;
       this.usageAttemptAt.set(accountId, Date.now());
       const { retryAt, ...usage } = await this.adapters[account.family]
         .usage(account.home, { renewLogin })

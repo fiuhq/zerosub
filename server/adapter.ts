@@ -38,6 +38,11 @@ export interface LimitHit {
   /** When the limit lifts, if the provider said. */
   resetsAt: string | null;
   message: string;
+  /**
+   * The notice could also be a passing throttle (a bare 429, "rate limit"). The account only counts
+   * as out once a fresh usage reading shows a full window.
+   */
+  suspected?: boolean;
 }
 
 /** A finished turn, as Paseo reports it. */
