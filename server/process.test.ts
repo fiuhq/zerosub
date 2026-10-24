@@ -6,6 +6,16 @@ import { run } from "./process";
 
 const NODE = process.execPath;
 const MIB = 1024 * 1024;
+// Captured before any fake timers: vi.waitFor advances fake timers on every check, which would fire run()'s timeout early.
+const realSetTimeout = setTimeout;
+
+async function waitForFile(path: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${path}`);
+    await new Promise((resolve) => realSetTimeout(resolve, 20));
+  }
+}
 
 describe("run", () => {
   it("captures stdout, stderr and the exit code", async () => {
@@ -47,9 +57,9 @@ describe("run", () => {
       ).finally(() => {
         settled = true;
       });
-      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
+      await waitForFile(ready);
       vi.advanceTimersByTime(200);
-      await vi.waitFor(() => expect(existsSync(term)).toBe(true), { timeout: 10_000 });
+      await waitForFile(term);
       // SIGTERM was ignored, so only the 2 s SIGKILL escalation can end the child.
       expect(settled).toBe(false);
       vi.advanceTimersByTime(2_000);
@@ -76,19 +86,33 @@ describe("run", () => {
   });
 
   it.skipIf(process.platform === "win32")("reports the output limit, not a timeout, when a spewing child ignores SIGTERM", async () => {
-    const result = await run(
-      NODE,
-      [
-        "-e",
-        'process.on("SIGTERM", () => {}); const s = "z".repeat(65536); ' +
-          "for (let i = 0; i < 40; i++) process.stdout.write(s); " +
-          "setInterval(() => process.stdout.write(s), 100); setTimeout(() => {}, 30_000);",
-      ],
-      { timeoutMs: 300 },
-    );
-    expect(result.code).toBeNull();
-    expect(result.timedOut).toBe(false);
-    expect(result.stderr.split("\n")[0]).toBe("Command output exceeded the 1 MiB limit.");
-    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(MIB);
+    // Fake timers hold the 300 ms timeout until the output limit has sent SIGTERM, so a slow Node startup
+    // cannot let the timeout win the race; advancing past it then proves the limit cleared the timeout.
+    const dir = mkdtempSync(join(tmpdir(), "run-limit-"));
+    const term = join(dir, "term");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = run(
+        NODE,
+        [
+          "-e",
+          `const fs = require("fs"); process.on("SIGTERM", () => fs.writeFileSync(${JSON.stringify(term)}, "")); ` +
+            'const s = "z".repeat(65536); for (let i = 0; i < 40; i++) process.stdout.write(s); ' +
+            "setInterval(() => process.stdout.write(s), 100);",
+        ],
+        { timeoutMs: 300 },
+      );
+      await waitForFile(term);
+      vi.advanceTimersByTime(300);
+      vi.advanceTimersByTime(2_000);
+      const result = await pending;
+      expect(result.code).toBeNull();
+      expect(result.timedOut).toBe(false);
+      expect(result.stderr.split("\n")[0]).toBe("Command output exceeded the 1 MiB limit.");
+      expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(MIB);
+    } finally {
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 15_000);
 });
