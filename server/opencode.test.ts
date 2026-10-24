@@ -112,6 +112,8 @@ describe("OpenCode Go limits", () => {
   it("counts limit wording but not a bare throttle", () => {
     expect(detectOpenCodeGoLimit(failed("Usage limit reached for this 5-hour window."))).toMatchObject({ kind: "window" });
     expect(detectOpenCodeGoLimit(failed("429 Too Many Requests"))).toBeNull();
+    expect(detectOpenCodeGoLimit(failed("Rate limit reached for requests"))).toBeNull();
+    expect(detectOpenCodeGoLimit(failed("Context limit reached"))).toBeNull();
     expect(detectOpenCodeGoSignOut(failed("Invalid API key provided."))).not.toBeNull();
     expect(detectOpenCodeGoSignOut(failed('{"error":{"type":"authentication_error","code":"api_key_expired"}}'))).not.toBeNull();
   });
@@ -143,12 +145,14 @@ function account(id: string, kind: "main" | "managed"): StoredAccount {
   };
 }
 
-async function setUp(model: string) {
+async function setUp(model: string, siblingModels: string[] = []) {
   const store = new StateStore(join(root, "state.json"));
   await store.update((draft) =>
     Object.assign(draft, {
       accounts: [account(MAIN, "main"), account("opencode-spare", "managed")],
-      sessions: { [AGENT]: { accountId: MAIN, family: "opencode", openedAt: new Date().toISOString() } },
+      sessions: Object.fromEntries(
+        [model, ...siblingModels].map((_, index) => [`agent-${index + 1}`, { accountId: MAIN, family: "opencode", openedAt: new Date().toISOString() }]),
+      ),
     }),
   );
   const real = new OpenCodeGoAdapter();
@@ -169,13 +173,19 @@ async function setUp(model: string) {
     environmentWarning: () => null,
   } as unknown as FamilyAdapter;
   const reopened: string[] = [];
-  const agent = { id: AGENT, provider: "opencode", status: "idle", archivedAt: null, model };
+  const agents = [model, ...siblingModels].map((value, index) => ({
+    id: `agent-${index + 1}`,
+    provider: "opencode",
+    status: "idle",
+    archivedAt: null,
+    model: value,
+  }));
   const paseo = {
     config: { get: async () => ({ config: { providers: {} } }) },
     agents: {
-      list: async () => ({ entries: [{ agent }], pageInfo: { hasMore: false, nextCursor: null } }),
-      ref: () => ({
-        refresh: async () => ({ agent }),
+      list: async () => ({ entries: agents.map((agent) => ({ agent })), pageInfo: { hasMore: false, nextCursor: null } }),
+      ref: (id: string) => ({
+        refresh: async () => ({ agent: agents.find((agent) => agent.id === id) }),
         send: async () => undefined,
         timeline: { append: async () => undefined, refetch: async () => ({ entries: [] }) },
       }),
@@ -216,5 +226,12 @@ describe("an OpenCode agent's limit", () => {
     await turn();
     expect(reopened).toEqual([]);
     expect((await store.read()).accounts.find((entry) => entry.id === MAIN)?.limitedUntil).toBeNull();
+  });
+
+  it("moves idle Go siblings off the spent account but not one on another provider's model", async () => {
+    const { reopened, turn } = await setUp("opencode-go/glm-5.3", ["openrouter/some-model", "opencode-go/kimi-k3"]);
+    await turn();
+    await vi.waitFor(() => expect(reopened).toContain("agent-3"));
+    expect(reopened).toEqual([AGENT, "agent-3"]);
   });
 });

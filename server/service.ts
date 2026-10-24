@@ -1065,6 +1065,7 @@ export class Service {
       if (this.switching.has(agentId) || !this.switchGuard.allows(agentId, Date.now())) continue;
       const info = await agentInfo(paseo, agentId);
       if (!info || info.archived || info.status !== "idle") continue;
+      if (this.adapters[family].ownsModel?.(info.model) === false) continue;
       if (await this.lastTurnHitLimit(paseo, agentId, family)) continue;
       this.switching.add(agentId);
       try {

@@ -161,7 +161,7 @@ export function detectCopilotSignOut(event: TurnEvent): string | null {
  * OpenCode Go reports its 5-hour, weekly and monthly allowances as usage limits; it publishes no
  * exact wording or usage feed, so only limit wording counts, and a bare 429 is left alone.
  */
-const OPENCODE_GO_LIMIT = /usage limit|limit (?:has been )?reached|reached (?:your|the) (?:5-hour|weekly|monthly|usage) (?:limit|allowance)|exceeded (?:your|the) (?:5-hour|weekly|monthly|usage) (?:limit|allowance)/i;
+const OPENCODE_GO_LIMIT = /usage limit|reached (?:your|the) (?:5-hour|weekly|monthly|usage) (?:limit|allowance)|exceeded (?:your|the) (?:5-hour|weekly|monthly|usage) (?:limit|allowance)/i;
 const OPENCODE_GO_SIGNED_OUT = /invalid api key|incorrect api key|invalid credential|api_key_expired|api key (?:is |has )?(?:invalid|revoked|missing|expired)|\b401\b.*(?:unauthori[sz]ed|api key)/i;
 
 export function detectOpenCodeGoLimit(event: TurnEvent): LimitHit | null {
