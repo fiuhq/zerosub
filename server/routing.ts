@@ -134,8 +134,9 @@ export function projectAccount(state: StoredState, family: Family, projectId: st
   return undefined;
 }
 
-/** Accounts set aside for other projects: nothing automatic puts an agent of `projectId` on them. */
+/** Accounts set aside for other projects: nothing automatic puts an agent of `projectId` on them. An unknown project reserves nothing. */
 export function reservedElsewhere(state: StoredState, projectId: string | null | undefined): Set<string> {
+  if (!projectId) return new Set();
   const mine = new Set(state.projects.filter((rule) => rule.projectId === projectId).map((rule) => rule.accountId));
   return new Set(state.projects.map((rule) => rule.accountId).filter((id) => !mine.has(id)));
 }
@@ -187,9 +188,9 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   const reserved = reservedElsewhere(state, input.projectId);
 
   // The project's account comes before the default and before spreading, but not before an account
-  // chosen for this agent or one a limit or switch early moved it to.
+  // chosen for this agent or one a limit or switch early moved it to, nor a thread that can't move.
   const dedicated = projectAccount(state, input.family, input.projectId);
-  if (dedicated && (!account || binding?.source === "balance")) {
+  if (dedicated && (!account || (binding?.source === "balance" && (input.portable || fresh)))) {
     account = dedicated;
     if (!input.portable && bound?.id !== dedicated.id) bind = { accountId: dedicated.id, source: "thread", at };
   }

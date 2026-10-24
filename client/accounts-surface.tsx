@@ -623,7 +623,12 @@ function ProjectsModal({
     let live = true;
     store
       .rpc(listProjects, {})
-      .then((result) => live && setProjects(result.projects))
+      .then((result) => {
+        if (!live) return;
+        const listed = new Set(result.projects.map((project) => project.projectId));
+        setProjects(result.projects);
+        setChosen((current) => new Set([...current].filter((projectId) => listed.has(projectId))));
+      })
       .catch((error: unknown) => live && toast.error(describe(error)));
     return () => {
       live = false;

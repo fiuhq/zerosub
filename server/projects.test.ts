@@ -101,6 +101,19 @@ describe("project accounts", () => {
     expect(route(state, { projectId: FLXBL, reason: "resume" })?.account.id).toBe(WORK);
   });
 
+  it("leave a thread that can't move on the account spreading gave it", () => {
+    const at = new Date(NOW).toISOString();
+    const state = stateWith({ bindings: { [AGENT]: { accountId: SPARE, source: "balance", at } } });
+    const decision = route(state, { projectId: FLXBL, reason: "resume", portable: false });
+    expect(decision?.account.id).toBe(SPARE);
+    expect(decision?.bind).toBeNull();
+  });
+
+  it("reserve nothing against an agent whose project is unknown", () => {
+    expect(reservedElsewhere(stateWith(), null)).toEqual(new Set());
+    expect(route(stateWith({ defaults: { claude: WORK, codex: null } }), { projectId: null })?.account.id).toBe(WORK);
+  });
+
   it("fail over only to accounts not set aside for another project", () => {
     const limited = account(WORK, "managed", { limitedUntil: new Date(NOW + 3_600_000).toISOString(), limitKind: "window" });
     const state = stateWith({
@@ -155,12 +168,12 @@ const adapter = {
   detectSignOut: () => null,
 } as unknown as FamilyAdapter;
 
-async function setUp(state: Partial<StoredState> = {}) {
+async function setUp(state: Partial<StoredState> = {}, workspaceId = "wks_flxbl") {
   const store = new StateStore(join(root, "state.json"));
   await store.update((draft) => Object.assign(draft, { accounts: [account(MAIN, "main"), account(WORK)], ...state }));
   const workspaceReads: string[] = [];
   const reopened: string[] = [];
-  const agent = { id: AGENT, provider: "claude", status: "idle", archivedAt: null };
+  const agent = { id: AGENT, provider: "claude", status: "idle", archivedAt: null, workspaceId };
   const paseo = {
     config: { get: async () => ({ config: { providers: {} } }) },
     projects: {
@@ -175,7 +188,8 @@ async function setUp(state: Partial<StoredState> = {}) {
       ref: (id: string) => ({
         refresh: async () => {
           workspaceReads.push(id);
-          return { id, projectId: id === "wks_flxbl" ? FLXBL : HOME };
+          if (id === "wks_broken") throw new Error("daemon busy");
+          return { id, projectId: id === "wks_flxbl" ? FLXBL : id === "wks_home" ? HOME : null };
         },
       }),
     },
@@ -195,12 +209,13 @@ async function setUp(state: Partial<StoredState> = {}) {
     locate: async () => "/usr/local/bin/paseo",
     reopen: async (id: string) => {
       reopened.push(id);
-      await open("wks_flxbl", "refresh");
+      await open(workspaceId, "refresh");
       return { ok: true as const };
     },
   };
   const families = { resolve: async () => ({ claude: "claude" as const }) };
-  const service = new Service({ claude: adapter, codex: adapter }, store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
+  const codex = { ...adapter, family: "codex", portable: false } as unknown as FamilyAdapter;
+  const service = new Service({ claude: adapter, codex }, store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
   return { service, store, open, paseo, reopened, workspaceReads };
 }
 
@@ -225,6 +240,60 @@ describe("project accounts in the service", () => {
     expect(state.projects).toEqual([{ projectId: FLXBL, accountId: WORK, name: "flxbl-io/sfp-pro" }]);
     expect(state.sessions[AGENT]?.accountId).toBe(WORK);
     expect((await service.listProjects(paseo as never)).find((project) => project.projectId === FLXBL)?.accounts).toEqual({ claude: WORK });
+  });
+
+  it("read a workspace without a project once, however many sessions open at once", async () => {
+    const { open, workspaceReads } = await setUp();
+    await Promise.all([open("wks_none"), open("wks_none")]);
+    await open("wks_none", "resume");
+    await open("wks_broken");
+    await open("wks_broken", "resume");
+    expect(workspaceReads).toEqual(["wks_none", "wks_broken"]);
+  });
+
+  it("move an agent whose project wasn't recorded along with its project", async () => {
+    const at = new Date(NOW).toISOString();
+    const { service, store, paseo, reopened } = await setUp({
+      bindings: { [AGENT]: { accountId: MAIN, source: "balance", at } },
+      sessions: { [AGENT]: { accountId: MAIN, family: "claude", openedAt: at } },
+    });
+    await service.setProjects(paseo as never, WORK, [FLXBL]);
+    expect(reopened).toEqual([AGENT]);
+    const state = await store.read();
+    expect(state.bindings[AGENT]).toBeUndefined();
+    expect(state.sessions[AGENT]).toMatchObject({ accountId: WORK, projectId: FLXBL });
+  });
+
+  it("move other projects' agents off an account set aside for a project", async () => {
+    const at = new Date(NOW).toISOString();
+    const { service, store, paseo, reopened } = await setUp(
+      {
+        bindings: { [AGENT]: { accountId: WORK, source: "balance", at } },
+        sessions: { [AGENT]: { accountId: WORK, family: "claude", openedAt: at, projectId: HOME } },
+      },
+      "wks_home",
+    );
+    await service.setProjects(paseo as never, WORK, [FLXBL]);
+    expect(reopened).toEqual([AGENT]);
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(MAIN);
+  });
+
+  it("keep a ChatGPT thread's placement when its project gets an account", async () => {
+    const at = new Date(NOW).toISOString();
+    const thread = { accountId: "codex-spare", source: "balance" as const, at };
+    const { service, store, paseo } = await setUp({
+      accounts: [account(MAIN, "main"), account(WORK), account("codex-spare", "managed", { family: "codex" })],
+      bindings: { "codex-agent": thread },
+      sessions: { "codex-agent": { accountId: "codex-spare", family: "codex", openedAt: at, projectId: FLXBL } },
+    });
+    await service.setProjects(paseo as never, WORK, [FLXBL]);
+    expect((await store.read()).bindings["codex-agent"]).toEqual(thread);
+  });
+
+  it("drop a project Paseo has since removed instead of refusing the save", async () => {
+    const { service, store, paseo } = await setUp({ projects: [{ projectId: "prj_gone", accountId: WORK, name: null }] });
+    await service.setProjects(paseo as never, WORK, ["prj_gone", FLXBL]);
+    expect((await store.read()).projects).toEqual([{ projectId: FLXBL, accountId: WORK, name: "flxbl-io/sfp-pro" }]);
   });
 
   it("refuse a project Paseo doesn't know", async () => {

@@ -81,6 +81,8 @@ const PRUNE_MS = 10 * 60_000;
 /** After a reset, limit notices from turns that were already running are stale. */
 const RESET_GRACE_MS = 5 * 60_000;
 const AGENT_LIST_MS = 3_000;
+/** How long a workspace whose project couldn't be read waits before it is read again. */
+const UNKNOWN_PROJECT_MS = 60_000;
 /** How long a default change waits for sessions already being routed to record their account. */
 const ROUTING_WAIT_MS = 5_000;
 
@@ -119,6 +121,7 @@ interface AgentInfo {
   title: string | null;
   /** The agent this one carries on from, when ZeroSub started it as a continuation. */
   continuedFrom: string | null;
+  workspaceId: string | null;
 }
 
 type ReopenOutcome = "reopened" | "deferred" | "closed" | "failed";
@@ -164,8 +167,8 @@ export class Service {
   private readonly redeemLocks = new Map<string, Mutex>();
   private readonly browserSignIn = canSignInWithBrowser();
   private agentCache: { at: number; agents: Promise<AgentInfo[]> } | null = null;
-  /** Each workspace's Paseo project; a workspace never changes project. */
-  private readonly workspaceProjects = new Map<string, string>();
+  /** Each workspace's Paseo project; a workspace never changes project, so only a failed read expires. */
+  private readonly workspaceProjects = new Map<string, { project: Promise<string | null>; until: number }>();
   private lastPrune = 0;
   private collecting = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -437,18 +440,22 @@ export class Service {
   }
 
   /** The Paseo project a workspace belongs to; null when it can't be read, so routing never waits on it twice. */
-  private async projectOf(paseo: PaseoApi, workspaceId: string | null): Promise<string | null> {
-    if (!workspaceId) return null;
+  private projectOf(paseo: PaseoApi, workspaceId: string | null): Promise<string | null> {
+    if (!workspaceId) return Promise.resolve(null);
     const known = this.workspaceProjects.get(workspaceId);
-    if (known) return known;
-    const projectId = await withDeadline(paseo.workspaces.ref(workspaceId).refresh(), 5_000)
+    if (known && Date.now() < known.until) return known.project;
+    const project = withDeadline(paseo.workspaces.ref(workspaceId).refresh(), 5_000)
       .then((workspace) => workspace?.projectId ?? null)
       .catch((error: unknown) => {
         log(`could not read the project of workspace ${workspaceId}`, error);
         return null;
       });
-    if (projectId) this.workspaceProjects.set(workspaceId, projectId);
-    return projectId;
+    const entry = { project, until: Infinity };
+    this.workspaceProjects.set(workspaceId, entry);
+    void project.then((projectId) => {
+      if (!projectId) entry.until = Date.now() + UNKNOWN_PROJECT_MS;
+    });
+    return project;
   }
 
   /** Accounts set aside for projects other than this agent's. */
@@ -1782,17 +1789,31 @@ export class Service {
     const wanted = [...new Set(projectIds)];
     const names = new Map((await paseo.projects.list()).projects.map((project) => [project.projectId, project.projectDisplayName]));
     const unknown = wanted.filter((projectId) => !names.has(projectId));
-    if (unknown.length > 0) throw new Error(`Paseo has no project ${unknown.join(", ")} on this host.`);
+    const held = new Set((await this.store.read()).projects.filter((rule) => rule.accountId === accountId).map((rule) => rule.projectId));
+    const added = unknown.filter((projectId) => !held.has(projectId));
+    if (added.length > 0) throw new Error(`Paseo has no project ${added.join(", ")} on this host.`);
+    const kept = wanted.filter((projectId) => names.has(projectId));
+    // Agents opened before their project was recorded count as in it, so they move with it.
+    const live = await this.liveAgents(paseo);
+    const found = await Promise.all(live.map(async (agent) => [agent.id, await this.projectOf(paseo, agent.workspaceId)] as const));
     await this.store.update((draft) => {
-      const touched = new Set([...wanted, ...draft.projects.filter((rule) => rule.accountId === accountId).map((rule) => rule.projectId)]);
+      for (const [agentId, projectId] of found) {
+        const session = draft.sessions[agentId];
+        if (session && projectId && !session.projectId) session.projectId = projectId;
+      }
+      const touched = new Set([...kept, ...draft.projects.filter((rule) => rule.accountId === accountId).map((rule) => rule.projectId)]);
       draft.projects = draft.projects.filter((rule) => {
         if (rule.accountId === accountId) return false;
-        return !(wanted.includes(rule.projectId) && findAccount(draft, rule.accountId)?.family === account.family);
+        return !(kept.includes(rule.projectId) && findAccount(draft, rule.accountId)?.family === account.family);
       });
-      for (const projectId of wanted) draft.projects.push({ projectId, accountId, name: names.get(projectId) ?? null });
+      for (const projectId of kept) draft.projects.push({ projectId, accountId, name: names.get(projectId) ?? null });
       for (const [agentId, binding] of Object.entries(draft.bindings)) {
         const projectId = draft.sessions[agentId]?.projectId;
-        if (projectId && touched.has(projectId) && (binding.source === "auto" || binding.source === "balance")) delete draft.bindings[agentId];
+        const family = findAccount(draft, binding.accountId)?.family;
+        if (!projectId || !family || !this.adapters[family].portable || (binding.source !== "auto" && binding.source !== "balance")) continue;
+        // Agents of other projects leave an account now set aside for these ones.
+        const offReserved = binding.accountId === accountId && kept.length > 0 && !kept.includes(projectId);
+        if (touched.has(projectId) || offReserved) delete draft.bindings[agentId];
       }
     });
     return this.reconcile(paseo, "project");
@@ -2008,6 +2029,7 @@ function toAgentInfo(agent: AgentSnapshot): AgentInfo {
     hasHistory: Boolean(agent.lastUserMessageAt),
     title: agent.title ?? null,
     continuedFrom: agent.labels?.[CONTINUED_FROM_LABEL] ?? null,
+    workspaceId: agent.workspaceId ?? null,
   };
 }
 
