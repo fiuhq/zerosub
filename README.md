@@ -6,6 +6,7 @@ Use several Claude and ChatGPT (Codex) subscriptions side by side in [Paseo](htt
 - **Your existing CLI logins show up automatically.** Nothing changes until you add a second account.
 - **Pick an account per agent.** An account button in the message box shows which account each Claude or Codex agent uses. Tap it to switch.
 - **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the account with the most room left and carries on. New agents skip exhausted accounts.
+- **Switch early.** An agent whose turn ends on a nearly full account moves to one with room before its next turn, so it doesn't stop halfway through a task. New agents skip nearly full accounts too.
 - **Live usage.** Each account shows its own 5-hour and weekly usage and when they reset. Accounts in use refresh about every minute and after each turn, and a limit shows up the moment it hits.
 - **Banked resets.** If a provider has banked limit resets on an account, you can use one from the account card or the agent's account button.
 - **Set an account aside.** Disable an account for a while and its agents move to your other accounts, then come back when you enable it again.
@@ -49,6 +50,12 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - A short note in the agent's timeline says what happened.
    - As a safety stop, one agent changes accounts at most 4 times in 10 minutes. If it hits that, its timeline says so; pick an account from its account button to carry on.
    - An exhausted account is skipped until it resets. If you know it has room again sooner, for example after upgrading or buying credits, press **Mark as available again** (the check mark) on its card.
+5. **Switch early** (under **Before the limit**) moves agents before they hit a limit at all:
+   - When an agent's turn ends, ZeroSub reads its account's usage again. If a 5-hour window is at least **80%** used, or a weekly one at least **95%**, the agent moves to the account with the most room before its next turn. Both lines can be set from 50 to 100; 100 turns that kind of window off. Weekly windows get the higher line because one turn barely moves them.
+   - It only moves onto an account at least 10 points below every line. A move costs the conversation its prompt cache on the new account, and the margin keeps agents from bouncing between two accounts that are both nearly full. When no account has that much room, the agent stays and the limit failover above takes over.
+   - It acts only on a live reading from the last 10 minutes, never a cached or failed one, and leaves a window that refills in the next 10 minutes alone.
+   - New agents that would follow the default onto a nearly full account start on one with room instead, and stay there.
+   - It leaves an account you chose for an agent alone until that account really runs out. ChatGPT conversations with history can't change accounts, so only new ChatGPT agents are affected.
 
 ### Claude vs. ChatGPT when switching mid-conversation
 

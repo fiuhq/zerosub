@@ -1,5 +1,5 @@
 import { peakUsage } from "../shared/format";
-import type { Family, Usage } from "../shared/model";
+import type { Family, Usage, UsageWindow } from "../shared/model";
 import {
   accountsOf,
   defaultAccount,
@@ -56,6 +56,72 @@ export function mostAvailable(
   return candidates[0];
 }
 
+/**
+ * Switch early: the percent used at which an account counts as nearly full, for windows that refill
+ * within hours (Claude's 5-hour, Codex's primary) and for weekly or longer ones. A long window gets
+ * its own, higher line because one turn barely moves it, while a 5-hour window can jump several
+ * percent in a turn. 100 turns that kind of window off.
+ */
+export interface EarlyLines {
+  short: number;
+  long: number;
+}
+
+/**
+ * A move to another account costs the conversation its prompt cache there, so an account is only
+ * worth moving onto with this much room below every line; that also keeps agents from bouncing
+ * between two accounts that are both nearly full.
+ */
+export const EARLY_MARGIN = 10;
+/** A reading older than this is too stale to move an agent on. */
+export const EARLY_READING_MS = 10 * 60_000;
+/** A full window that refills this soon isn't worth leaving: the account is about to have room. */
+export const EARLY_RESET_MS = 10 * 60_000;
+
+export function isLongWindow(window: UsageWindow): boolean {
+  return /week|seven|month|day/i.test(`${window.id} ${window.label}`);
+}
+
+function lineFor(window: UsageWindow, lines: EarlyLines): number {
+  return isLongWindow(window) ? lines.long : lines.short;
+}
+
+/** A live, error-free reading taken recently enough to move an agent on. */
+function current(usage: Usage | null | undefined, now: number): usage is Usage {
+  return Boolean(usage && !usage.cached && !usage.error && usage.windows.length > 0 && now - Date.parse(usage.fetchedAt) <= EARLY_READING_MS);
+}
+
+/**
+ * The windows that make an account nearly full: at or over their line and not about to refill.
+ * Empty when the reading can't be trusted, so a stale or failed reading never moves an agent.
+ */
+export function nearlyFull(usage: Usage | null | undefined, lines: EarlyLines, now: number): UsageWindow[] {
+  if (!current(usage, now)) return [];
+  return usage.windows.filter((window) => {
+    if (window.usedPercent < lineFor(window, lines)) return false;
+    const resets = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+    return !(Number.isFinite(resets) && resets - now <= EARLY_RESET_MS);
+  });
+}
+
+/** The account has a current reading with `EARLY_MARGIN` to spare below every line. */
+export function hasRoom(usage: Usage | null | undefined, lines: EarlyLines, now: number): boolean {
+  return current(usage, now) && usage.windows.every((window) => window.usedPercent < lineFor(window, lines) - EARLY_MARGIN);
+}
+
+/** The roomiest usable account, other than `exclude`, that is worth moving onto early, if any. */
+export function roomyAccount(
+  state: StoredState,
+  family: Family,
+  usageOf: (accountId: string) => Usage | null | undefined,
+  lines: EarlyLines,
+  now: number,
+  exclude: ReadonlySet<string>,
+): StoredAccount | undefined {
+  const cramped = accountsOf(state, family).filter((account) => !hasRoom(usageOf(account.id), lines, now));
+  return mostAvailable(state, family, usageOf, now, new Set([...exclude, ...cramped.map((account) => account.id)]));
+}
+
 export interface RouteInput {
   agentId: string;
   family: Family;
@@ -69,6 +135,8 @@ export interface RouteInput {
    */
   portable: boolean;
   usageOf(accountId: string): Usage | null | undefined;
+  /** Switch early: keep brand-new agents off nearly full accounts. Null when it's off. */
+  early?: EarlyLines | null;
 }
 
 export interface RouteDecision {
@@ -76,7 +144,7 @@ export interface RouteDecision {
   /** A binding to persist so the agent stays where it was routed. */
   bind: Binding | null;
   /** Why the preferred account was skipped, if it was. */
-  skipped: { account: StoredAccount; why: "limited" | "signed_out" | "disabled" } | null;
+  skipped: { account: StoredAccount; why: "limited" | "signed_out" | "disabled" | "nearly_full" } | null;
 }
 
 /**
@@ -126,6 +194,16 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
           : why === "disabled"
             ? null
             : { accountId: alternative.id, source: "auto", at };
+    }
+  }
+  // A brand-new agent that would follow the default onto a nearly full account starts where there's
+  // room instead, and stays there. An account chosen for this agent is left alone.
+  if (!skipped && fresh && !bound && input.autoSwitch && input.early && nearlyFull(input.usageOf(account.id), input.early, input.now).length > 0) {
+    const roomy = roomyAccount(state, input.family, input.usageOf, input.early, input.now, new Set([account.id]));
+    if (roomy) {
+      skipped = { account, why: "nearly_full" };
+      account = roomy;
+      bind = { accountId: roomy.id, source: input.portable ? "auto" : "thread", at };
     }
   }
   return { account, bind, skipped };

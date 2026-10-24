@@ -15,6 +15,8 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
   const settings = useSettings(preferences);
   const multiHost = useHosts().length > 1;
   const [prompt, setPrompt] = useState<string | null>(null);
+  const [earlyAt, setEarlyAt] = useState<string | null>(null);
+  const [earlyWeeklyAt, setEarlyWeeklyAt] = useState<string | null>(null);
   const muted = { color: theme.colors.foregroundMuted };
   if (settings.status === "loading") return <Text style={muted}>Loading…</Text>;
   if (settings.status !== "ready") {
@@ -90,6 +92,28 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
           />
         </SettingsCard>
       </SettingsSection>
+      <SettingsSection title="Before the limit">
+        <SettingsCard>
+          <PercentSetting
+            label="Switch early at, 5-hour limit (% used)"
+            hint="When an agent's turn ends on an account at least this full, it moves to an account with room before its next turn, instead of stopping halfway through a task. New agents skip that account too. 50 to 99; 100 turns it off."
+            value={settings.values.switchEarlyAt}
+            draft={earlyAt}
+            onDraft={setEarlyAt}
+            disabled={settings.saving || !settings.values.autoSwitch}
+            onSave={(switchEarlyAt) => save({ switchEarlyAt })}
+          />
+          <PercentSetting
+            label="Switch early at, weekly limit (% used)"
+            hint="The same for weekly limits. One turn barely moves them, so this can sit closer to 100."
+            value={settings.values.switchEarlyWeeklyAt}
+            draft={earlyWeeklyAt}
+            onDraft={setEarlyWeeklyAt}
+            disabled={settings.saving || !settings.values.autoSwitch}
+            onSave={(switchEarlyWeeklyAt) => save({ switchEarlyWeeklyAt })}
+          />
+        </SettingsCard>
+      </SettingsSection>
       <SettingsSection title="New agents and composer">
         <SettingsCard>
           <SettingsSwitch
@@ -122,6 +146,37 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
           />
         </SettingsCard>
       </SettingsSection>
+    </>
+  );
+}
+
+/** A whole-number percent from 50 to 100, saved with its own button. */
+function PercentSetting(props: {
+  label: string;
+  hint: string;
+  value: number;
+  draft: string | null;
+  onDraft(text: string): void;
+  disabled: boolean;
+  onSave(value: number): void;
+}) {
+  const valid = props.draft !== null && /^\d+$/.test(props.draft.trim()) && Number(props.draft) >= 50 && Number(props.draft) <= 100;
+  return (
+    <>
+      <SettingsInput
+        label={props.label}
+        hint={props.hint}
+        initialValue={String(props.value)}
+        onChangeText={props.onDraft}
+        disabled={props.disabled}
+        error={props.draft !== null && !valid ? "Enter a whole number from 50 to 100." : undefined}
+      />
+      <SettingsAction
+        label="Save"
+        actionLabel="Save"
+        disabled={props.disabled || !valid || Number(props.draft) === props.value}
+        onPress={() => props.onSave(Number(props.draft))}
+      />
     </>
   );
 }

@@ -22,6 +22,15 @@ export const preferences = defineSettings({
      * open at the time. Codex threads never move either way.
      */
     moveAgentsOnDefaultChange: z.boolean().default(true),
+    /**
+     * Switch early: when an agent's turn ends on an account at least this full in a window that
+     * refills within hours (Claude's 5-hour, Codex's primary), it moves to an account with room
+     * before its next turn, instead of stopping halfway through one. New agents skip such an account
+     * too. 100 turns it off.
+     */
+    switchEarlyAt: z.number().int().min(50).max(100).default(80),
+    /** The same, for weekly and longer windows, which one turn barely moves. */
+    switchEarlyWeeklyAt: z.number().int().min(50).max(100).default(95),
     /** New agents start on the account with the most headroom instead of the default. */
     balanceNewAgents: z.boolean().default(false),
     /** When every account of a provider is at its limit, spend a banked reset instead of stopping. */
