@@ -66,8 +66,24 @@ describe("an OpenCode Go account", () => {
     expect(await adapter.env(home)).toEqual({ OPENCODE_API_KEY: "sk-go-a" });
     expect(await adapter.env(null)).toEqual({ OPENCODE_API_KEY: null });
     expect(await readGoKey(home)).toBe("sk-go-a");
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
     expect((await adapter.identity(home)).identity).toBe(`opencode-go|${keyFingerprint("sk-go-a")}`);
     expect((await adapter.identity(join(root, "empty"))).signedIn).toBe(false);
+  });
+
+  it("is signed out once OpenCode refuses its key, but not while OpenCode can't be reached", async () => {
+    const home = join(root, "opencode-a");
+    await mkdir(home);
+    await writeFile(join(home, "opencode-go.json"), JSON.stringify({ key: "sk-go-a" }));
+    const adapter = new OpenCodeGoAdapter();
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("offline");
+    });
+    expect((await adapter.identity(home)).signedIn).toBe(true);
+    vi.stubGlobal("fetch", async () => new Response("", { status: 503 }));
+    expect((await adapter.identity(home)).signedIn).toBe(true);
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: { message: "Invalid credential" } }), { status: 401 }));
+    expect((await adapter.identity(home)).signedIn).toBe(false);
   });
 
   it("only follows turns on Go models", () => {
@@ -145,13 +161,14 @@ function account(id: string, kind: "main" | "managed"): StoredAccount {
   };
 }
 
-async function setUp(model: string, siblingModels: string[] = []) {
+async function setUp(model: string, siblingModels: string[] = [], options: { real?: boolean; accountId?: string; message?: string } = {}) {
+  const bound = options.accountId ?? MAIN;
   const store = new StateStore(join(root, "state.json"));
   await store.update((draft) =>
     Object.assign(draft, {
       accounts: [account(MAIN, "main"), account("opencode-spare", "managed")],
       sessions: Object.fromEntries(
-        [model, ...siblingModels].map((_, index) => [`agent-${index + 1}`, { accountId: MAIN, family: "opencode", openedAt: new Date().toISOString() }]),
+        [model, ...siblingModels].map((_, index) => [`agent-${index + 1}`, { accountId: bound, family: "opencode", openedAt: new Date().toISOString() }]),
       ),
     }),
   );
@@ -171,6 +188,7 @@ async function setUp(model: string, siblingModels: string[] = []) {
     detectLimit: detectOpenCodeGoLimit,
     detectSignOut: () => null,
     environmentWarning: () => null,
+    ...(options.real ? { identity: (home: string | null) => real.identity(home), detectSignOut: detectOpenCodeGoSignOut } : {}),
   } as unknown as FamilyAdapter;
   const reopened: string[] = [];
   const agents = [model, ...siblingModels].map((value, index) => ({
@@ -207,7 +225,7 @@ async function setUp(model: string, siblingModels: string[] = []) {
   service.setPreferences(preferences.schema.parse({}));
   const turn = () =>
     service.onTurnEnded(
-      { agent: { id: AGENT, provider: "opencode" }, turnId: "t", outcome: { kind: "failed", error: { message: "Usage limit reached." } }, timeline: [] } as never,
+      { agent: { id: AGENT, provider: "opencode" }, turnId: "t", outcome: { kind: "failed", error: { message: options.message ?? "Usage limit reached." } }, timeline: [] } as never,
       context,
     );
   return { store, reopened, turn };
@@ -233,5 +251,22 @@ describe("an OpenCode agent's limit", () => {
     await turn();
     await vi.waitFor(() => expect(reopened).toContain("agent-3"));
     expect(reopened).toEqual([AGENT, "agent-3"]);
+  });
+});
+
+describe("an OpenCode Go key OpenCode refuses", () => {
+  it("signs the account out after an Invalid credential turn", async () => {
+    const home = join(root, "opencode-spare");
+    await mkdir(home);
+    await writeFile(join(home, "opencode-go.json"), JSON.stringify({ key: "sk-revoked" }));
+    // The live endpoint's answer to a revoked key.
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ error: { message: "Invalid credential" } }), { status: 401 }));
+    const { store, turn } = await setUp("opencode-go/minimax-m3", [], {
+      real: true,
+      accountId: "opencode-spare",
+      message: "Upstream request failed: Invalid credential",
+    });
+    await turn();
+    expect((await store.read()).accounts.find((entry) => entry.id === "opencode-spare")?.signedIn).toBe(false);
   });
 });

@@ -66,18 +66,20 @@ export async function openCodeHasSavedGoKey(dataDir: string = openCodeDataDir())
   }
 }
 
-async function keyWorks(key: string): Promise<{ ok: true } | { ok: false; message: string }> {
+/** `rejected` only when OpenCode answered 401: the key itself is wrong or expired, not the network. */
+async function keyWorks(key: string): Promise<{ ok: true } | { ok: false; rejected: boolean; message: string }> {
   try {
     const response = await fetch(GO_MODELS, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (response.ok) return { ok: true };
-    if (response.status !== 401) return { ok: false, message: `OpenCode answered HTTP ${response.status}; try again.` };
+    if (response.status !== 401) return { ok: false, rejected: false, message: `OpenCode answered HTTP ${response.status}; try again.` };
     const body = (await response.json().catch(() => null)) as { error?: { code?: unknown } } | null;
     return {
       ok: false,
+      rejected: true,
       message: body?.error?.code === "api_key_expired" ? "That key has expired. Make a new one in the OpenCode Console." : "OpenCode didn't accept that key.",
     };
   } catch (error) {
-    return { ok: false, message: `Couldn't reach OpenCode: ${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, rejected: false, message: `Couldn't reach OpenCode: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
@@ -109,7 +111,9 @@ export class OpenCodeGoAdapter implements FamilyAdapter {
   async identity(home: string | null): Promise<Identity> {
     if (home) {
       const key = await readGoKey(home);
-      if (!key) return { signedIn: false, email: null, plan: null, organization: null, identity: null };
+      // A key OpenCode now refuses (revoked or expired) signs the account out; an unreachable OpenCode doesn't.
+      const check = key ? await keyWorks(key) : null;
+      if (!key || (check && !check.ok && check.rejected)) return { signedIn: false, email: null, plan: null, organization: null, identity: null };
       return { signedIn: true, email: null, plan: "Go", organization: null, identity: `opencode-go|${keyFingerprint(key)}` };
     }
     const signedIn = Boolean(process.env[KEY_ENV]) || (await openCodeHasSavedGoKey());
