@@ -21,6 +21,8 @@ function cause(row: SwitchRow): string | null {
       return `${row.to} is enabled again.`;
     case "default":
       return "The default account changed.";
+    case "early":
+      return `${from} is ${row.detail ?? "nearly at its usage limit"}${reset ? ` (resets ${reset})` : ""}.`;
     default:
       return null;
   }
@@ -64,7 +66,9 @@ export function describeRow(row: SwitchRow): string {
       return `${lead}Moves to ${row.to} when its session next starts.`;
     default: {
       const from =
-        row.from && row.reason !== "limit" && row.reason !== "signed_out" && row.reason !== "disabled" ? `from ${row.from} ` : "";
+        row.from && row.reason !== "limit" && row.reason !== "signed_out" && row.reason !== "disabled" && row.reason !== "early"
+          ? `from ${row.from} `
+          : "";
       return `${lead}Switched ${from}to ${row.to}${row.continued ? " and carried on" : ""}.`;
     }
   }

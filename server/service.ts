@@ -41,7 +41,7 @@ import { homesDir } from "./paths";
 import { Reopener } from "./reopen";
 import { SwitchGuard } from "./switch-guard";
 import { loadReadings, mergeUsage, saveReadings, showLimit } from "./usage";
-import { chooseAccount, isLimited, isUsable, mostAvailable } from "./routing";
+import { chooseAccount, isLimited, isUsable, mostAvailable, nearlyFull, roomyAccount, type EarlyLines } from "./routing";
 import {
   MAIN_ACCOUNT_ID,
   StateStore,
@@ -89,6 +89,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   autoContinue: true,
   continuePrompt: DEFAULT_CONTINUE_PROMPT,
   moveAgentsOnDefaultChange: true,
+  switchEarlyAt: 80,
+  switchEarlyWeeklyAt: 95,
   balanceNewAgents: false,
   showComposerPill: true,
   autoRedeem: false,
@@ -236,11 +238,21 @@ export class Service {
       }
     }
     const state = await this.store.read();
+    // While an account is nearly full, its family's other accounts are read as often as the default,
+    // so switch early has current numbers to pick a new agent's account from.
+    const lines = this.early;
+    const pressed = new Set(lines ? state.accounts.filter((account) => nearlyFull(this.usage.get(account.id), lines, now).length > 0).map((account) => account.family) : []);
     for (const account of state.accounts) {
       const attempted = this.usageAttemptAt.get(account.id) ?? 0;
       const busy = now - (this.activeAt.get(account.id) ?? 0) < ACTIVE_WINDOW_MS;
       const isDefault = defaultAccount(state, account.family)?.id === account.id;
-      const every = account.disabled ? USAGE_IDLE_MS : busy ? USAGE_BUSY_MS : isDefault ? USAGE_DEFAULT_MS : USAGE_IDLE_MS;
+      const every = account.disabled
+        ? USAGE_IDLE_MS
+        : busy
+          ? USAGE_BUSY_MS
+          : isDefault || pressed.has(account.family)
+            ? USAGE_DEFAULT_MS
+            : USAGE_IDLE_MS;
       if (account.signedIn && now - attempted > every) {
         void this.refreshUsage(account.id).catch((error: unknown) => log(`usage refresh for ${account.label} failed`, error));
       }
@@ -387,6 +399,7 @@ export class Service {
       balanceNewAgents: this.prefs.balanceNewAgents,
       portable: adapter.portable,
       usageOf: (id) => this.usage.get(id),
+      early: this.early,
     });
     if (!decision) return undefined;
     const { account } = decision;
@@ -443,6 +456,7 @@ export class Service {
       }
     }
     if (this.deferred.has(agentId)) await this.finishDeferred(context.paseo, agentId, family);
+    else if (accountId && event.outcome.kind === "completed") await this.switchEarly(context.paseo, agentId, family, accountId);
     // The turn just used the account: read its usage again as soon as the provider allows.
     if (accountId) void this.refreshUsage(accountId).catch(() => undefined);
   }
@@ -476,6 +490,64 @@ export class Service {
     if (!current || this.targetFor(state, agentId, family) === current) return; // Switched back meanwhile.
     const outcome = await this.reopenAgent(paseo, agentId, row, true);
     if (outcome === "reopened" && row) await this.appendRow(paseo, agentId, await this.landed(row, agentId));
+  }
+
+  // ------------------------------------------------------------------ switch early
+
+  /** Switch early's lines, or null when it's off. */
+  private get early(): EarlyLines | null {
+    const lines = { short: this.prefs.switchEarlyAt, long: this.prefs.switchEarlyWeeklyAt };
+    return this.prefs.autoSwitch && (lines.short < 100 || lines.long < 100) ? lines : null;
+  }
+
+  /**
+   * Moves an agent whose turn just ended off an account that's nearly full, so its next turn starts
+   * where there's room instead of stopping halfway. It decides on a reading taken after the turn,
+   * moves only conversations that can change accounts in place, only onto an account with room to
+   * spare, and leaves an account chosen for this agent alone until it really runs out.
+   */
+  private async switchEarly(paseo: PaseoApi, agentId: string, family: Family, accountId: string): Promise<void> {
+    const lines = this.early;
+    if (!lines || !this.adapters[family].portable || this.switching.has(agentId)) return;
+    this.switching.add(agentId);
+    try {
+      // The turn just used the account: read it again, as soon as the provider allows, before deciding.
+      await withTimeout(this.refreshUsage(accountId, true), 12_000);
+      const now = Date.now();
+      const full = nearlyFull(this.usage.get(accountId), lines, now).sort((a, b) => b.usedPercent - a.usedPercent)[0];
+      if (!full) return;
+      const state = await this.store.read();
+      const account = findAccount(state, accountId);
+      if (!account || this.runningOn(state, agentId, family) !== accountId) return;
+      if (state.bindings[agentId]?.source === "user" || !this.switchGuard.allows(agentId, now)) return;
+      // Idle accounts are read rarely; read the candidates now so the pick rests on current numbers.
+      const others = accountsOf(state, family).filter((other) => other.id !== accountId && isUsable(other, now));
+      await withTimeout(Promise.allSettled(others.map((other) => this.refreshUsage(other.id, true))), 12_000);
+      const next = roomyAccount(state, family, (id) => this.usage.get(id), lines, Date.now(), new Set([accountId]));
+      if (!next) return;
+      console.log(`[ZeroSub] ${account.label} is at ${Math.round(full.usedPercent)}% of its ${full.label} limit; moving ${agentId} to ${next.label} early`);
+      await this.store.update((draft) => {
+        draft.bindings[agentId] = { accountId: next.id, source: "auto", at: new Date(now).toISOString() };
+      });
+      this.switchGuard.note(agentId, now);
+      const row: SwitchRow = {
+        family,
+        from: account.label,
+        to: next.label,
+        reason: "early",
+        resetsAt: full.resetsAt,
+        continued: false,
+        continuedIn: null,
+        toFamily: null,
+        outcome: "switched",
+        detail: `at ${Math.round(full.usedPercent)}% of its ${full.label} limit`,
+        at: new Date(now).toISOString(),
+      };
+      const outcome = await this.reopenAgent(paseo, agentId, row, true);
+      if (outcome === "reopened") await this.appendRow(paseo, agentId, await this.landed(row, agentId));
+    } finally {
+      this.switching.delete(agentId);
+    }
   }
 
   // ------------------------------------------------------------------ limits and failover
