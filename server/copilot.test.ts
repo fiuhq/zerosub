@@ -1,11 +1,17 @@
 import { lstat, mkdir, mkdtemp, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TurnEvent } from "./adapter";
 import { CopilotAdapter, copilotCacheDir, copilotUser, parseCommentedJson, parseCopilotCache, parseCopilotLogin } from "./copilot";
 import { prepareCopilotHome } from "./homes";
 import { detectCopilotLimit, detectCopilotSignOut } from "./limits";
+import { run } from "./process";
+
+vi.mock("./process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./process")>();
+  return { ...actual, run: vi.fn(actual.run) };
+});
 
 let root: string;
 const saved = { COPILOT_HOME: process.env.COPILOT_HOME, PASEO_HOME: process.env.PASEO_HOME, GH_TOKEN: process.env.GH_TOKEN };
@@ -188,15 +194,41 @@ describe("prepareCopilotHome", () => {
 });
 
 describe("removing a Copilot account", () => {
-  it("leaves the keychain sign-in alone while another home still uses that GitHub user", async () => {
-    const main = join(root, "main");
-    const home = join(root, "paseo", "zerosub", "homes", "copilot-a");
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  let main: string;
+  let home: string;
+
+  beforeEach(async () => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+    vi.mocked(run).mockClear();
+    vi.mocked(run).mockResolvedValue({ code: 0, stdout: "", stderr: "", timedOut: false });
+    main = join(root, "main");
+    home = join(root, "paseo", "zerosub", "homes", "copilot-a");
     process.env.COPILOT_HOME = main;
     await mkdir(main, { recursive: true });
     await mkdir(home, { recursive: true });
-    await writeFile(join(main, "config.json"), SIGNED_IN_CONFIG);
-    await writeFile(join(home, "config.json"), SIGNED_IN_CONFIG.replace(/octo-user/g, "Octo-User"));
-    // Returns before touching the keychain: main signs in as the same user.
-    await expect(new CopilotAdapter().logout(home)).resolves.toBeUndefined();
+    await writeFile(join(home, "config.json"), SIGNED_IN_CONFIG);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", platform);
+  });
+
+  it("leaves the keychain sign-in alone while another home still uses that GitHub user", async () => {
+    await writeFile(join(main, "config.json"), SIGNED_IN_CONFIG.replace(/octo-user/g, "Octo-User"));
+    await new CopilotAdapter().logout(home);
+    expect(vi.mocked(run).mock.calls.filter(([, args]) => args.includes("delete-generic-password"))).toEqual([]);
+  });
+
+  it("deletes both keychain items once no other home uses that GitHub user", async () => {
+    await writeFile(join(main, "config.json"), SIGNED_IN_CONFIG.replace(/octo-user/g, "someone-else"));
+    await new CopilotAdapter().logout(home);
+    const deleted = vi.mocked(run).mock.calls
+      .filter(([, args]) => args.includes("delete-generic-password"))
+      .map(([command, args]) => [command, args[args.indexOf("-s") + 1], args[args.indexOf("-a") + 1]]);
+    expect(deleted).toEqual([
+      ["/usr/bin/security", "copilot-cli", "https://github.com:octo-user"],
+      ["/usr/bin/security", "copilot-cli", "https://github.com:octo-user:github"],
+    ]);
   });
 });
