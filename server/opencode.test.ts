@@ -83,11 +83,18 @@ describe("an OpenCode Go account", () => {
     const fetched: string[] = [];
     vi.stubGlobal("fetch", async (url: string, init: { headers: Record<string, string> }) => {
       fetched.push(`${url} ${init.headers.Authorization}`);
-      return new Response("{}", { status: init.headers.Authorization === "Bearer good" ? 200 : 401 });
+      // The live endpoint's answers: 401 "Invalid credential", or `api_key_expired` for an old key.
+      if (init.headers.Authorization === "Bearer old") {
+        return new Response(JSON.stringify({ error: { type: "authentication_error", code: "api_key_expired" } }), { status: 401 });
+      }
+      return new Response(JSON.stringify(init.headers.Authorization === "Bearer good" ? { data: [] } : { error: { message: "Invalid credential" } }), {
+        status: init.headers.Authorization === "Bearer good" ? 200 : 401,
+      });
     });
     const login = await new OpenCodeGoAdapter().login(home, "code");
     expect(login.progress).toMatchObject({ step: "waiting", codeUrl: "https://opencode.ai/console" });
     await expect(login.submitCode("bad")).rejects.toThrow(/didn't accept/);
+    await expect(login.submitCode("old")).rejects.toThrow(/has expired/);
     expect(await readGoKey(home)).toBeNull();
     await login.submitCode("  good  ");
     expect(await login.finished).toEqual({ ok: true, message: null });
@@ -106,6 +113,7 @@ describe("OpenCode Go limits", () => {
     expect(detectOpenCodeGoLimit(failed("Usage limit reached for this 5-hour window."))).toMatchObject({ kind: "window" });
     expect(detectOpenCodeGoLimit(failed("429 Too Many Requests"))).toBeNull();
     expect(detectOpenCodeGoSignOut(failed("Invalid API key provided."))).not.toBeNull();
+    expect(detectOpenCodeGoSignOut(failed('{"error":{"type":"authentication_error","code":"api_key_expired"}}'))).not.toBeNull();
   });
 });
 

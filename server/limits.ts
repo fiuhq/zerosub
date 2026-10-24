@@ -162,7 +162,7 @@ export function detectCopilotSignOut(event: TurnEvent): string | null {
  * exact wording or usage feed, so only limit wording counts, and a bare 429 is left alone.
  */
 const OPENCODE_GO_LIMIT = /usage limit|limit (?:has been )?reached|reached (?:your|the) (?:5-hour|weekly|monthly|usage) (?:limit|allowance)|exceeded (?:your|the) (?:5-hour|weekly|monthly|usage) (?:limit|allowance)/i;
-const OPENCODE_GO_SIGNED_OUT = /invalid api key|incorrect api key|api key (?:is )?(?:invalid|revoked|missing)|\b401\b.*(?:unauthori[sz]ed|api key)/i;
+const OPENCODE_GO_SIGNED_OUT = /invalid api key|incorrect api key|invalid credential|api_key_expired|api key (?:is |has )?(?:invalid|revoked|missing|expired)|\b401\b.*(?:unauthori[sz]ed|api key)/i;
 
 export function detectOpenCodeGoLimit(event: TurnEvent): LimitHit | null {
   for (const text of notices(event, false)) if (OPENCODE_GO_LIMIT.test(text)) return { message: firstLine(text), kind: "window", resetsAt: null };

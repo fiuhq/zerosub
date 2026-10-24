@@ -70,7 +70,12 @@ async function keyWorks(key: string): Promise<{ ok: true } | { ok: false; messag
   try {
     const response = await fetch(GO_MODELS, { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
     if (response.ok) return { ok: true };
-    return { ok: false, message: response.status === 401 || response.status === 403 ? "OpenCode didn't accept that key." : `OpenCode answered HTTP ${response.status}.` };
+    if (response.status !== 401) return { ok: false, message: `OpenCode answered HTTP ${response.status}; try again.` };
+    const body = (await response.json().catch(() => null)) as { error?: { code?: unknown } } | null;
+    return {
+      ok: false,
+      message: body?.error?.code === "api_key_expired" ? "That key has expired. Make a new one in the OpenCode Console." : "OpenCode didn't accept that key.",
+    };
   } catch (error) {
     return { ok: false, message: `Couldn't reach OpenCode: ${error instanceof Error ? error.message : String(error)}` };
   }
