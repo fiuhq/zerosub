@@ -65,6 +65,7 @@ describe("account presentation", () => {
     },
     agentCount: 2,
     home: "/homes/claude-a",
+    projects: [],
   };
 
   it("summarises the busiest window", () => {

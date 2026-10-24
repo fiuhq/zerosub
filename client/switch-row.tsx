@@ -21,6 +21,8 @@ function cause(row: SwitchRow): string | null {
       return `${row.to} is enabled again.`;
     case "default":
       return "The default account changed.";
+    case "project":
+      return "This project's account changed.";
     case "early":
       return `${from} is ${row.detail ?? "nearly at its usage limit"}${reset ? ` (resets ${reset})` : ""}.`;
     default:

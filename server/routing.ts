@@ -123,6 +123,23 @@ export function roomyAccount(
   return mostAvailable(state, family, usageOf, now, new Set([...exclude, ...cramped.map((account) => account.id)]));
 }
 
+/** The account `projectId` uses for this family, if one is set. */
+export function projectAccount(state: StoredState, family: Family, projectId: string | null | undefined): StoredAccount | undefined {
+  if (!projectId) return undefined;
+  for (const rule of state.projects) {
+    if (rule.projectId !== projectId) continue;
+    const account = findAccount(state, rule.accountId);
+    if (account?.family === family) return account;
+  }
+  return undefined;
+}
+
+/** Accounts set aside for other projects: nothing automatic puts an agent of `projectId` on them. */
+export function reservedElsewhere(state: StoredState, projectId: string | null | undefined): Set<string> {
+  const mine = new Set(state.projects.filter((rule) => rule.projectId === projectId).map((rule) => rule.accountId));
+  return new Set(state.projects.map((rule) => rule.accountId).filter((id) => !mine.has(id)));
+}
+
 export interface RouteInput {
   agentId: string;
   family: Family;
@@ -138,6 +155,8 @@ export interface RouteInput {
   usageOf(accountId: string): Usage | null | undefined;
   /** Switch early: keep brand-new agents off nearly full accounts. Null when it's off. */
   early?: EarlyLines | null;
+  /** The Paseo project of the agent's workspace, when known. */
+  projectId?: string | null;
 }
 
 export interface RouteDecision {
@@ -165,15 +184,27 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   const bound = findAccount(state, binding?.accountId);
   let account = bound && bound.family === input.family ? bound : undefined;
   let bind: Binding | null = null;
+  const reserved = reservedElsewhere(state, input.projectId);
 
+  // The project's account comes before the default and before spreading, but not before an account
+  // chosen for this agent or one a limit or switch early moved it to.
+  const dedicated = projectAccount(state, input.family, input.projectId);
+  if (dedicated && (!account || binding?.source === "balance")) {
+    account = dedicated;
+    if (!input.portable && bound?.id !== dedicated.id) bind = { accountId: dedicated.id, source: "thread", at };
+  }
   if (!account && fresh && input.balanceNewAgents && accounts.length > 1) {
-    account = mostAvailable(state, input.family, input.usageOf, input.now);
+    account = mostAvailable(state, input.family, input.usageOf, input.now, reserved);
     if (account) bind = { accountId: account.id, source: "balance", at };
   }
   if (!account) {
     // An imported Codex thread most likely came from the user's own CLI, so it belongs to that login.
     const imported = !input.portable && input.reason === "import" ? mainAccount(state, input.family) : undefined;
     account = imported ?? defaultAccount(state, input.family);
+    // A default set aside for another project yields to a shared account, when there is one.
+    if (account && !imported && reserved.has(account.id)) {
+      account = mostAvailable(state, input.family, input.usageOf, input.now, reserved) ?? account;
+    }
     // A thread that can't move is pinned to the account it first opened on.
     if (account && !input.portable) bind = { accountId: account.id, source: "thread", at };
   }
@@ -183,7 +214,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   const why = !account.signedIn ? "signed_out" : account.disabled ? "disabled" : isLimited(account, input.now) ? "limited" : null;
   const mayMove = fresh || input.portable;
   if (why && mayMove && (input.autoSwitch || why !== "limited")) {
-    const alternative = mostAvailable(state, input.family, input.usageOf, input.now, new Set([account.id]));
+    const alternative = mostAvailable(state, input.family, input.usageOf, input.now, new Set([...reserved, account.id]));
     if (alternative) {
       skipped = { account, why };
       account = alternative;
@@ -200,7 +231,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   // A brand-new agent that would follow the default onto a nearly full account starts where there's
   // room instead, and stays there. An account chosen for this agent is left alone.
   if (!skipped && fresh && !bound && input.autoSwitch && input.early && nearlyFull(input.usageOf(account.id), input.early, input.now).length > 0) {
-    const roomy = roomyAccount(state, input.family, input.usageOf, input.early, input.now, new Set([account.id]));
+    const roomy = roomyAccount(state, input.family, input.usageOf, input.early, input.now, new Set([...reserved, account.id]));
     if (roomy) {
       skipped = { account, why: "nearly_full" };
       account = roomy;

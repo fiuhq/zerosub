@@ -74,6 +74,8 @@ export const AccountViewSchema = z.object({
   usage: UsageSchema.nullable(),
   agentCount: z.number(),
   home: z.string().nullable(),
+  /** Paseo projects whose agents use this account. */
+  projects: z.array(z.object({ projectId: z.string(), name: z.string().nullable() })).default([]),
 });
 export type AccountView = z.infer<typeof AccountViewSchema>;
 

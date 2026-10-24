@@ -27,6 +27,8 @@ export const SwitchRowSchema = z.object({
     "exhausted",
     /** Switch early: `from` was nearly at its limit, so the agent moved before its next turn. */
     "early",
+    /** The agent's project now uses `to`. */
+    "project",
   ]),
   /** When the exhausted account frees up again, if known. */
   resetsAt: z.string().nullable(),
