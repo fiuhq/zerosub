@@ -31,6 +31,12 @@ export function mainClaudeGlobalConfig(): string {
   return configured ? join(resolve(configured), ".claude.json") : join(homedir(), ".claude.json");
 }
 
+/** Kimi Code CLI's home when `KIMI_CODE_HOME` is not set. */
+export function mainKimiHome(): string {
+  const configured = process.env.KIMI_CODE_HOME?.trim();
+  return configured ? resolve(configured) : join(homedir(), ".kimi-code");
+}
+
 export function mainCodexHome(): string {
   const configured = process.env.CODEX_HOME?.trim();
   return configured ? resolve(configured) : join(homedir(), ".codex");

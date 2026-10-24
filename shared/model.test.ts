@@ -11,12 +11,13 @@ describe("families", () => {
   });
 
   it("fall back to every other family, most preferred first", () => {
-    expect(fallbackFamilies("claude")).toEqual(["codex"]);
-    expect(fallbackFamilies("codex")).toEqual(["claude"]);
+    expect(fallbackFamilies("claude")).toEqual(["codex", "kimi"]);
+    expect(fallbackFamilies("codex")).toEqual(["claude", "kimi"]);
+    expect(fallbackFamilies("kimi")).toEqual(["claude", "codex"]);
   });
 
   it("keep the CLI login ids and read the older two-family defaults", () => {
-    expect(MAIN_ACCOUNT_ID).toEqual({ claude: "claude-main", codex: "codex-main" });
+    expect(MAIN_ACCOUNT_ID).toEqual({ claude: "claude-main", codex: "codex-main", kimi: "kimi-main" });
     const { state, dropped } = salvageState({ version: 1, defaults: { claude: "claude-a", codex: null } });
     expect(dropped).toBe(false);
     expect(state.defaults).toEqual({ claude: "claude-a", codex: null });

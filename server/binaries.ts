@@ -35,6 +35,31 @@ export async function providerCommand(provider: Family): Promise<Command> {
   return cache.value[provider] ?? { command: provider, prefix: [] };
 }
 
+let quietOpener: Promise<string | null> | null = null;
+
+/**
+ * A folder of `open`/`xdg-open` stand-ins that do nothing. Put first on a CLI's `PATH`, it keeps a
+ * sign-in from opening a browser on the daemon's machine; the link shows in Paseo instead.
+ */
+export function quietOpenerDir(): Promise<string | null> {
+  if (process.platform === "win32") return Promise.resolve(null);
+  quietOpener ??= (async () => {
+    const directory = join(dataDir(), "bin", "quiet-open");
+    try {
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      for (const name of ["open", "xdg-open"]) {
+        await writeFile(join(directory, name), "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+        await chmod(join(directory, name), 0o700);
+      }
+      return directory;
+    } catch (error) {
+      console.warn("[ZeroSub] could not create the quiet browser folder", error instanceof Error ? error.message : error);
+      return null;
+    }
+  })();
+  return quietOpener;
+}
+
 let browserShim: Promise<string | null> | null = null;
 
 /**

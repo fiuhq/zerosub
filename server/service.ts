@@ -482,7 +482,9 @@ export class Service {
     if (accountId) this.activeAt.set(accountId, Date.now());
     if (event.outcome.kind !== "canceled") {
       const hit = adapter.detectLimit(event);
-      if (hit) return this.handleUnavailable(context.paseo, agentId, family, event.timeline, { kind: "limit", hit });
+      if (hit && (!hit.suspected || (accountId !== undefined && (await this.confirmFull(accountId))))) {
+        return this.handleUnavailable(context.paseo, agentId, family, event.timeline, { kind: "limit", hit });
+      }
       if (adapter.detectSignOut(event) && (await this.confirmSignedOut(agentId, family))) {
         return this.handleUnavailable(context.paseo, agentId, family, event.timeline, { kind: "signed_out" });
       }
@@ -502,6 +504,13 @@ export class Service {
     await this.store.update((draft) => {
       delete draft.sessions[agentId];
     });
+  }
+
+  /** A suspected limit is real only once a fresh, live reading shows one of the account's windows full. */
+  private async confirmFull(accountId: string): Promise<boolean> {
+    await withTimeout(this.refreshUsage(accountId, true), 12_000);
+    const usage = this.usage.get(accountId);
+    return Boolean(usage && !usage.cached && !usage.error && usage.windows.some((window) => window.usedPercent >= 100));
   }
 
   /** Re-checks the account an agent was using; true when it really is signed out now. */
@@ -1088,10 +1097,11 @@ export class Service {
     timeline: readonly AgentTimelineItem[] | undefined,
     source: "auto" | "user",
   ): Promise<{ fork: Continuation; account: StoredAccount; family: Family } | { skipped: string }> {
-    const candidates = fallbackFamilies(family);
-    if (candidates.length === 0) return { skipped: "No other provider is set up." };
     const families = await this.families.resolve(paseo);
     const state = await this.store.read();
+    // Only providers the user has accounts for; one that was never set up isn't a way out.
+    const candidates = fallbackFamilies(family).filter((other) => accountsOf(state, other).length > 0);
+    if (candidates.length === 0) return { skipped: "No other provider has an account here." };
     // Prompting the original again while it's still out mustn't start a second copy of the work,
     // whichever provider took it over.
     for (const agent of (await listAgents(paseo, false)).agents) {
