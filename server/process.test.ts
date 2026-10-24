@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { run } from "./process";
 
 const NODE = process.execPath;
@@ -25,14 +28,38 @@ describe("run", () => {
   });
 
   it.skipIf(process.platform === "win32")("escalates to SIGKILL when the child ignores SIGTERM", async () => {
-    const started = Date.now();
-    const result = await run(NODE, ["-e", 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 30_000)'], {
-      timeoutMs: 200,
-    });
-    expect(result.timedOut).toBe(true);
-    expect(result.code).toBeNull();
-    // 200 ms timeout + 2 s SIGKILL delay: proves we waited for the escalation instead of hanging.
-    expect(Date.now() - started).toBeGreaterThanOrEqual(1_900);
+    // The child marks when its SIGTERM handler is live and when SIGTERM arrives; fake timers start the
+    // timeout only after the first mark, so a slow Node startup cannot let SIGTERM kill it outright.
+    const dir = mkdtempSync(join(tmpdir(), "run-sigkill-"));
+    const ready = join(dir, "ready");
+    const term = join(dir, "term");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let settled = false;
+      const pending = run(
+        NODE,
+        [
+          "-e",
+          `const fs = require("fs"); process.on("SIGTERM", () => fs.writeFileSync(${JSON.stringify(term)}, "")); ` +
+            `fs.writeFileSync(${JSON.stringify(ready)}, ""); setInterval(() => {}, 1_000);`,
+        ],
+        { timeoutMs: 200 },
+      ).finally(() => {
+        settled = true;
+      });
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
+      vi.advanceTimersByTime(200);
+      await vi.waitFor(() => expect(existsSync(term)).toBe(true), { timeout: 10_000 });
+      // SIGTERM was ignored, so only the 2 s SIGKILL escalation can end the child.
+      expect(settled).toBe(false);
+      vi.advanceTimersByTime(2_000);
+      const result = await pending;
+      expect(result.timedOut).toBe(true);
+      expect(result.code).toBeNull();
+    } finally {
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 15_000);
 
   it("caps output past 1 MiB and reports the limit first", async () => {
