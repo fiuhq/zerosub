@@ -36,8 +36,8 @@ export const preferences = defineSettings({
     /** When every account of a provider is at its limit, spend a banked reset instead of stopping. */
     autoRedeem: z.boolean().default(false),
     /**
-     * When every account of a provider is at its limit, carry the chat on in a new agent on the
-     * other provider (Claude ↔ ChatGPT), in a mode no more permissive than the original's.
+     * When every account of a provider is at its limit, carry the chat on in a new agent on
+     * another provider (Claude, ChatGPT, Kimi Code), in a mode no more permissive than the original's.
      */
     forkOtherProvider: z.boolean().default(false),
     /** Show the account pill in the composer of Claude and Codex agents. */

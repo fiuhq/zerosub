@@ -30,7 +30,7 @@ function cause(row: SwitchRow): string | null {
   }
 }
 
-/** The work went on in a new agent on the other provider (Claude ↔ ChatGPT). */
+/** The work went on in a new agent on another provider (Claude, ChatGPT, Kimi Code). */
 function isFork(row: SwitchRow): boolean {
   return row.toFamily !== null && row.toFamily !== row.family;
 }

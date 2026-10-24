@@ -36,7 +36,7 @@ export const SwitchRowSchema = z.object({
   continued: z.boolean(),
   /** The conversation could not move in place and carries on in this new agent. */
   continuedIn: z.object({ agentId: z.string(), title: z.string() }).nullable().default(null),
-  /** Set when `continuedIn` runs on the other provider (a fork from Claude to ChatGPT, or back). */
+  /** Set when `continuedIn` runs on another provider (a fork to another family). */
   toFamily: FamilySchema.nullable().default(null),
   /**
    * `switched`: the agent now runs on `to`. `pending`: it moves when its session next starts.

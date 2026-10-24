@@ -1093,7 +1093,7 @@ export class Service {
   }
 
   /**
-   * Carries an agent's work on in a new agent on the other provider (Claude ↔ ChatGPT), for when
+   * Carries an agent's work on in a new agent on another provider (Claude, ChatGPT, Kimi Code), for when
    * every account of its own provider is out. The new agent gets the conversation so far and a mode
    * no more permissive than the original's; the original stays as it was.
    */

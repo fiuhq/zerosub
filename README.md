@@ -2,7 +2,7 @@
 
 Use several Claude, ChatGPT (Codex) and Kimi Code subscriptions side by side in [Paseo](https://paseo.sh), without logging in and out of the CLI.
 
-- **Add accounts in the app.** Click **Add account** under Claude or ChatGPT and sign in on any device, including your phone. You don't need a terminal, environment variables or config files.
+- **Add accounts in the app.** Click **Add account** under Claude, ChatGPT or Kimi Code and sign in on any device, including your phone. You don't need a terminal, environment variables or config files.
 - **Your existing CLI logins show up automatically.** Nothing changes until you add a second account.
 - **Pick an account per agent.** An account button in the message box shows which account each Claude or Codex agent uses. Tap it to switch.
 - **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the account with the most room left and carries on. New agents skip exhausted accounts.
@@ -35,7 +35,7 @@ Then open **Accounts (ZeroSub)** in the sidebar.
 ## Use it
 
 1. Open **Accounts (ZeroSub)** in the sidebar. Your current Claude Code and Codex logins are already listed.
-2. Click **Add account** under Claude or ChatGPT (Codex), then **Open sign-in page**, and sign in with the other account.
+2. Click **Add account** under Claude or ChatGPT (Codex), then **Open sign-in page** (for Kimi Code, see [Kimi Code](#kimi-code)), and sign in with the other account.
    - In a browser on the host's own computer, the page finishes by itself.
    - Anywhere else, choose **Use a code instead**. For Claude, paste the code shown after sign-in. For ChatGPT, type the code shown in Paseo on the page. Phones, and hosts without a desktop (servers, containers, daemons started over SSH), start with the code.
 3. Choose which account agents use:
