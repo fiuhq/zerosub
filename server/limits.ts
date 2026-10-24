@@ -134,6 +134,29 @@ export function detectKimiSignOut(event: TurnEvent): string | null {
   return null;
 }
 
+/** Copilot's spent allowances: they lift when the month or the spending limit turns over. */
+const COPILOT_BUDGET =
+  /run out of (?:your )?(?:included )?AI credits|No remaining quota for premium requests|reached your additional usage limit|reached the spending limit|quota_exceeded/i;
+/** A weekly rate limit is a real window; the account can't take the work until it resets. */
+const COPILOT_WINDOW = /reached your weekly rate limit|user_weekly_rate_limited/i;
+/** Short rate limits pass by themselves; they count only if usage shows the allowance spent. */
+const COPILOT_THROTTLE = /hit (?:your|the) rate limit|user_(?:global|model)_rate_limited|\b429\b|too many requests/i;
+const COPILOT_SIGNED_OUT = /No authentication information found|token found but could not be validated|Authentication required|Not authenticated|Bad credentials/i;
+
+export function detectCopilotLimit(event: TurnEvent): LimitHit | null {
+  for (const text of notices(event, false)) {
+    if (COPILOT_BUDGET.test(text)) return { message: firstLine(text), kind: "budget", resetsAt: null };
+    if (COPILOT_WINDOW.test(text)) return { message: firstLine(text), kind: "window", resetsAt: null };
+    if (COPILOT_THROTTLE.test(text)) return { message: firstLine(text), kind: "window", resetsAt: null, suspected: true };
+  }
+  return null;
+}
+
+export function detectCopilotSignOut(event: TurnEvent): string | null {
+  for (const text of notices(event, false)) if (COPILOT_SIGNED_OUT.test(text)) return firstLine(text);
+  return null;
+}
+
 // --------------------------------------------------------------------------- reset times
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];

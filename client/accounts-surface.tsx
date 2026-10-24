@@ -4,7 +4,7 @@ import { SettingsCard, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { accountSubtitle, formatAge, formatPlan, usageSummary } from "../shared/format";
-import { FAMILIES, FAMILY_HEADING, FAMILY_LABEL, FAMILY_PORTABLE, type AccountView, type Family } from "../shared/model";
+import { FALLBACK_ORDER, FAMILIES, FAMILY_HEADING, FAMILY_LABEL, FAMILY_PORTABLE, familyPhrase, type AccountView, type Family } from "../shared/model";
 import { preferences } from "../shared/preferences";
 import {
   clearAccountLimit,
@@ -76,7 +76,7 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
             ) : null}
           </View>
           <Text style={text.muted}>
-            Keep several Claude and ChatGPT accounts signed in. Each agent uses one; when an account
+            Keep several {familyPhrase()} accounts signed in. Each agent uses one; when an account
             hits its limit, agents move to another and keep going.
           </Text>
         </View>
@@ -773,8 +773,8 @@ function AutomationSettings({ theme }: { theme: Theme }) {
           onValueChange={(autoRedeem) => save({ autoRedeem })}
         />
         <SettingsSwitch
-          label="When every account is out, fork the chat to the other provider"
-          hint="A stopped Claude chat carries on in a new ChatGPT agent, or the other way round, with the conversation so far. The new agent gets no more permissions than the original; the original stays as it was."
+          label="When every account is out, fork the chat to another provider"
+          hint={`A stopped chat carries on in a new agent on the next provider you have an account for (${familyPhrase(FALLBACK_ORDER, "then")}), with the conversation so far. The new agent gets no more permissions than the original; the original stays as it was.`}
           value={settings.values.forkOtherProvider}
           disabled={settings.saving || !settings.values.autoSwitch}
           onValueChange={(forkOtherProvider) => save({ forkOtherProvider })}

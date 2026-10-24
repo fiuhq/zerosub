@@ -7,6 +7,7 @@ import type { FamilyAdapter, UsageRead } from "./adapter";
 import type { FamilyResolver } from "./families";
 import type { Reopener } from "./reopen";
 import { chooseAccount, hasRoom, nearlyFull } from "./routing";
+import { everyFamily } from "./test-families";
 import { Service } from "./service";
 import { MAIN_ACCOUNT_ID, StateStore, emptyState, type StoredAccount, type StoredState } from "./state";
 import { preferences } from "../shared/preferences";
@@ -206,7 +207,7 @@ async function setUp(levels: Record<string, [number, number]>, state: Partial<St
   };
   const families = { resolve: async () => ({ claude: "claude" as const }) };
   const claude = adapter(levels, reads);
-  const service = new Service({ claude, codex: claude, kimi: claude }, store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
+  const service = new Service(everyFamily(claude), store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
   service.setPreferences(preferences.schema.parse(prefs));
   // Readings for the other accounts, as the background upkeep would have taken them.
   for (const id of Object.keys(levels)) await service.refreshUsage(id, true);

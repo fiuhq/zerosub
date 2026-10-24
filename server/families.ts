@@ -20,6 +20,7 @@ const OWN_AUTH_KEYS: Record<Family, readonly string[]> = {
   ],
   codex: ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME", "OPENAI_BASE_URL"],
   kimi: ["KIMI_CODE_HOME", "KIMI_CODE_BASE_URL", "KIMI_CODE_OAUTH_HOST", "KIMI_OAUTH_HOST"],
+  copilot: ["COPILOT_HOME", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "COPILOT_PROVIDER_BASE_URL", "COPILOT_OFFLINE"],
 };
 
 export function bringsOwnAuth(family: Family, env: Record<string, unknown> | undefined): boolean {

@@ -8,6 +8,7 @@ import { prepareKimiHome } from "./homes";
 import { kimiBaseUrl, parseKimiLogin, parseKimiUsage, readKimiSignIn, readKimiToken } from "./kimi";
 import { detectKimiLimit, detectKimiSignOut } from "./limits";
 import type { Reopener } from "./reopen";
+import { everyFamily } from "./test-families";
 import { Service } from "./service";
 import { MAIN_ACCOUNT_ID, StateStore, type StoredAccount } from "./state";
 import { preferences } from "../shared/preferences";
@@ -216,7 +217,7 @@ async function setUp(mainFiveHour: () => number, usageSpacingMs = 0) {
   };
   const context = { paseo } as never;
   const service = new Service(
-    { claude: adapter, codex: adapter, kimi: adapter },
+    everyFamily(adapter),
     store,
     { resolve: async () => ({ kimi: "kimi" as const }) } as unknown as FamilyResolver,
     {

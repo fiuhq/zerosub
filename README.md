@@ -1,8 +1,8 @@
 # ZeroSub
 
-Use several Claude, ChatGPT (Codex) and Kimi Code subscriptions side by side in [Paseo](https://paseo.sh), without logging in and out of the CLI.
+Use several Claude, ChatGPT (Codex), Kimi Code and GitHub Copilot subscriptions side by side in [Paseo](https://paseo.sh), without logging in and out of the CLI.
 
-- **Add accounts in the app.** Click **Add account** under Claude, ChatGPT or Kimi Code and sign in on any device, including your phone. You don't need a terminal, environment variables or config files.
+- **Add accounts in the app.** Click **Add account** under Claude, ChatGPT, Kimi Code or Copilot and sign in on any device, including your phone. You don't need a terminal, environment variables or config files.
 - **Your existing CLI logins show up automatically.** Nothing changes until you add a second account.
 - **Pick an account per agent.** An account button in the message box shows which account each Claude or Codex agent uses. Tap it to switch.
 - **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the account with the most room left and carries on. New agents skip exhausted accounts.
@@ -12,7 +12,7 @@ Use several Claude, ChatGPT (Codex) and Kimi Code subscriptions side by side in 
 - **Banked resets.** If a provider has banked limit resets on an account, you can use one from the account card or the agent's account button.
 - **Set an account aside.** Disable an account for a while and its agents move to your other accounts, then come back when you enable it again.
 - **Several hosts.** Each Paseo host keeps its own accounts, and the Accounts screen says which host you're looking at.
-- **Fork to another provider (optional).** When every account of a provider is out, a stopped chat can carry on with the next provider you have an account for (Claude, then ChatGPT, then Kimi Code).
+- **Fork to another provider (optional).** When every account of a provider is out, a stopped chat can carry on with the next provider you have an account for (Claude, then ChatGPT, then Kimi Code, then Copilot).
 - **Everything else stays the same.** Every account shares your settings, skills, plugins, MCP servers, `CLAUDE.md`/`AGENTS.md` and conversation history.
 
 ## Install
@@ -35,7 +35,7 @@ Then open **Accounts (ZeroSub)** in the sidebar.
 ## Use it
 
 1. Open **Accounts (ZeroSub)** in the sidebar. Your current Claude Code and Codex logins are already listed.
-2. Click **Add account** under Claude or ChatGPT (Codex), then **Open sign-in page** (for Kimi Code, see [Kimi Code](#kimi-code)), and sign in with the other account.
+2. Click **Add account** under a provider, then **Open sign-in page** (for Kimi Code and Copilot, see [Kimi Code](#kimi-code) and [GitHub Copilot](#github-copilot)), and sign in with the other account.
    - In a browser on the host's own computer, the page finishes by itself.
    - Anywhere else, choose **Use a code instead**. For Claude, paste the code shown after sign-in. For ChatGPT, type the code shown in Paseo on the page. Phones, and hosts without a desktop (servers, containers, daemons started over SSH), start with the code.
 3. Choose which account agents use:
@@ -80,6 +80,14 @@ Then open **Accounts (ZeroSub)** in the sidebar.
 - Usage comes from Kimi Code's own usage service, for the region the login belongs to (kimi.ai or kimi.com): the 5-hour, weekly and monthly windows, including the monthly coding allowance.
 - Kimi reports a spent quota and an empty balance with its own wording, and those switch at once. A bare "429" or "rate limit" can also be a passing throttle, so it only counts as a limit when a fresh usage reading shows a full window.
 
+### GitHub Copilot
+
+- Uses [Copilot CLI](https://github.com/github/copilot-cli) where the daemon runs. Each account is a GitHub user; its home (`COPILOT_HOME`) keeps `config.json`, which names that user, and its session index. Session events, settings, plugins and MCP config stay shared, so a Copilot conversation moves between accounts in place.
+- **Add account** runs `copilot login --device-code` and shows GitHub's device link and code. Copilot keeps the sign-in in the system credential store under the GitHub user's name; ZeroSub only checks the entry exists and never reads the token, so nothing asks for keychain permission.
+- `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` and `GITHUB_TOKEN` override any stored sign-in, so agents on added accounts run without them. Agents on your CLI login keep them.
+- Usage is the monthly allowance (premium requests, or chat and completions on the free plan) from Copilot CLI's own cache of each user's quota, so it is as fresh as that user's last Copilot session, and switch early doesn't act on it. A spent allowance or a weekly rate limit switches accounts; a short rate limit doesn't.
+- Removing an account deletes its stored sign-in only when no other home signs in as the same GitHub user.
+
 ### Banked resets
 
 Some plans come with banked limit resets: ChatGPT's reset credits, and Claude Code's limit resets. When an account has any, its card shows how many are banked and when they expire, with a **Use reset** button. When an agent is stopped by a limit, its account button offers the reset too, and the agent carries on afterwards.
@@ -94,7 +102,7 @@ Some plans come with banked limit resets: ChatGPT's reset credits, and Claude Co
 ZeroSub tries these in order, and a timeline note says which one happened:
 
 1. **Use a banked reset**, if you turned on **Use banked resets when every account is out**.
-2. **Fork the chat to another provider**, if you turned on **When every account is out, fork the chat to the other provider** (off by default). A stopped chat continues in a new agent on the first provider, in the order Claude, ChatGPT, Kimi Code, that you have an account for, that Paseo can run here, and that has an account with room:
+2. **Fork the chat to another provider**, if you turned on **When every account is out, fork the chat to another provider** (off by default). A stopped chat continues in a new agent on the first provider, in the order Claude, ChatGPT, Kimi Code, Copilot, that you have an account for, that Paseo can run here, and that has an account with room:
    - The new agent opens in the same workspace with the conversation so far and goes straight back to work. If that conversation began as a hand-off itself, only the start and end of the earlier one are quoted. It uses the other provider's default model and its account with the most room left.
    - Its permission mode matches the original's level. Bypass becomes Full Access, and Accept File Edits becomes Default Permissions. Codex has no read-only or ask-first mode, so a Claude agent in Plan Mode or Always Ask isn't forked. ZeroSub never gives a fork more freedom than you gave the original.
    - The original agent stays as it was, and prompting it again while its provider is still out points to the same fork rather than starting another.

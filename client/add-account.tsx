@@ -296,10 +296,12 @@ function SignInSteps({
               onPress={() => void copy(login.userCode ?? "", "Code")}
             />
           </Row>
-          <Text style={text.small}>
-            If the page says code sign-in is off, turn on device code sign-in in ChatGPT → Settings → Security (or ask
-            your workspace admin), then try again.
-          </Text>
+          {family === "codex" ? (
+            <Text style={text.small}>
+              If the page says code sign-in is off, turn on device code sign-in in ChatGPT → Settings → Security (or
+              ask your workspace admin), then try again.
+            </Text>
+          ) : null}
         </Step>
       ) : null}
 

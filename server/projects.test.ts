@@ -7,6 +7,7 @@ import type { FamilyAdapter } from "./adapter";
 import type { FamilyResolver } from "./families";
 import type { Reopener } from "./reopen";
 import { chooseAccount, reservedElsewhere, type RouteInput } from "./routing";
+import { everyFamily } from "./test-families";
 import { Service } from "./service";
 import { MAIN_ACCOUNT_ID, StateStore, emptyState, type StoredAccount, type StoredState } from "./state";
 
@@ -227,7 +228,7 @@ async function setUp(state: Partial<StoredState> = {}, workspaceId = "wks_flxbl"
   };
   const families = { resolve: async () => ({ claude: "claude" as const, codex: "codex" as const }) };
   const codex = { ...adapter, family: "codex", portable: false } as unknown as FamilyAdapter;
-  const service = new Service({ claude: adapter, codex, kimi: adapter }, store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
+  const service = new Service(everyFamily(adapter, { codex }), store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
   return { service, store, open, paseo, reopened, workspaceReads };
 }
 
