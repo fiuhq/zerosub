@@ -203,8 +203,11 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     const imported = !input.portable && input.reason === "import" ? mainAccount(state, input.family) : undefined;
     account = imported ?? defaultAccount(state, input.family);
     // A default set aside for another project yields to a shared account, when there is one.
+    // It keeps an agent on the shared account it already runs on, so shifting usage doesn't move it.
     if (account && !imported && reserved.has(account.id)) {
-      account = mostAvailable(state, input.family, input.usageOf, input.now, reserved) ?? account;
+      const running = findAccount(state, state.sessions[input.agentId]?.accountId);
+      const stays = running && running.family === input.family && isUsable(running, input.now) && !reserved.has(running.id);
+      account = (stays ? running : mostAvailable(state, input.family, input.usageOf, input.now, reserved)) ?? account;
     }
     // A thread that can't move is pinned to the account it first opened on.
     if (account && !input.portable) bind = { accountId: account.id, source: "thread", at };

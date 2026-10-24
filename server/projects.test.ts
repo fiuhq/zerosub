@@ -109,6 +109,17 @@ describe("project accounts", () => {
     expect(decision?.bind).toBeNull();
   });
 
+  it("keep an agent on the shared account it runs on when its default is set aside, as usage shifts", () => {
+    const at = new Date(NOW).toISOString();
+    const state = stateWith({
+      defaults: { claude: WORK, codex: null },
+      sessions: { [AGENT]: { accountId: MAIN, family: "claude", openedAt: at, projectId: HOME } },
+    });
+    const usageOf = (id: string) => (id === MAIN ? reading(30) : reading(20));
+    expect(route(state, { projectId: HOME, reason: "resume", usageOf })?.account.id).toBe(MAIN);
+    expect(route(state, { projectId: HOME, reason: "refresh", usageOf })?.account.id).toBe(MAIN);
+  });
+
   it("reserve nothing against an agent whose project is unknown", () => {
     expect(reservedElsewhere(stateWith(), null)).toEqual(new Set());
     expect(route(stateWith({ defaults: { claude: WORK, codex: null } }), { projectId: null })?.account.id).toBe(WORK);
@@ -203,8 +214,8 @@ async function setUp(state: Partial<StoredState> = {}, workspaceId = "wks_flxbl"
     },
   };
   const context = { paseo } as never;
-  const open = (workspaceId: string, reason = "create") =>
-    service.onSessionOpen({ agentId: AGENT, workspaceId, provider: "claude", cwd: "/work", reason, purpose: "interactive", env: {} } as never, context);
+  const open = (workspaceId: string, reason = "create", agentId = AGENT, provider = "claude") =>
+    service.onSessionOpen({ agentId, workspaceId, provider, cwd: "/work", reason, purpose: "interactive", env: {} } as never, context);
   const reopener = {
     locate: async () => "/usr/local/bin/paseo",
     reopen: async (id: string) => {
@@ -213,7 +224,7 @@ async function setUp(state: Partial<StoredState> = {}, workspaceId = "wks_flxbl"
       return { ok: true as const };
     },
   };
-  const families = { resolve: async () => ({ claude: "claude" as const }) };
+  const families = { resolve: async () => ({ claude: "claude" as const, codex: "codex" as const }) };
   const codex = { ...adapter, family: "codex", portable: false } as unknown as FamilyAdapter;
   const service = new Service({ claude: adapter, codex }, store, families as unknown as FamilyResolver, reopener as unknown as Reopener);
   return { service, store, open, paseo, reopened, workspaceReads };
@@ -278,16 +289,41 @@ describe("project accounts in the service", () => {
     expect((await store.read()).sessions[AGENT]?.accountId).toBe(MAIN);
   });
 
-  it("keep a ChatGPT thread's placement when its project gets an account", async () => {
+  it("keep a ChatGPT thread on its own account when its project gets another", async () => {
     const at = new Date(NOW).toISOString();
     const thread = { accountId: "codex-spare", source: "balance" as const, at };
-    const { service, store, paseo } = await setUp({
-      accounts: [account(MAIN, "main"), account(WORK), account("codex-spare", "managed", { family: "codex" })],
+    const { service, store, paseo, open } = await setUp({
+      accounts: [
+        account(MAIN, "main"),
+        account(WORK),
+        account("codex-spare", "managed", { family: "codex" }),
+        account("codex-work", "managed", { family: "codex" }),
+      ],
       bindings: { "codex-agent": thread },
       sessions: { "codex-agent": { accountId: "codex-spare", family: "codex", openedAt: at, projectId: FLXBL } },
     });
-    await service.setProjects(paseo as never, WORK, [FLXBL]);
+    await service.setProjects(paseo as never, "codex-work", [FLXBL]);
     expect((await store.read()).bindings["codex-agent"]).toEqual(thread);
+    const resumed = await open("wks_flxbl", "resume", "codex-agent", "codex");
+    expect(resumed?.env.CLAUDE_CONFIG_DIR).toBe("/homes/codex-spare");
+    expect((await store.read()).sessions["codex-agent"]?.accountId).toBe("codex-spare");
+  });
+
+  it("leave an agent on its shared account when its default is set aside for another project", async () => {
+    const at = new Date(NOW).toISOString();
+    const { service, store, paseo, open, reopened } = await setUp(
+      {
+        accounts: [account(MAIN, "main"), account(WORK), account(SPARE)],
+        defaults: { claude: WORK, codex: null },
+        projects: [{ projectId: FLXBL, accountId: WORK, name: null }],
+        sessions: { [AGENT]: { accountId: SPARE, family: "claude", openedAt: at, projectId: HOME } },
+      },
+      "wks_home",
+    );
+    await service.setProjects(paseo as never, WORK, [FLXBL]);
+    expect(reopened).toEqual([]);
+    expect((await open("wks_home", "resume"))?.env.CLAUDE_CONFIG_DIR).toBe(`/homes/${SPARE}`);
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(SPARE);
   });
 
   it("drop a project Paseo has since removed instead of refusing the save", async () => {
