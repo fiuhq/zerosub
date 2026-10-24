@@ -12,9 +12,13 @@ import { run } from "./process";
 /** OpenCode's integration for the Go subscription, and the variable it takes a key from. */
 export const GO_INTEGRATION = "opencode-go";
 const KEY_ENV = "OPENCODE_API_KEY";
-/** Where Go keys are made, and an endpoint that tells a working key from a wrong one. */
+/**
+ * Where Go keys are made, and an endpoint that tells a working key from a wrong one: Go's model list
+ * answers 401 "Invalid credential" to a bad key. (The `inference/go` routes only serve OpenCode's own
+ * sessions.)
+ */
 const KEY_PAGE = "https://opencode.ai/console";
-const GO_MODELS = "https://opencode.ai/inference/go/openai/v1/models";
+const GO_MODELS = "https://opencode.ai/zen/go/v1/models";
 
 /** OpenCode's data folder (`$XDG_DATA_HOME/opencode`), where its database keeps chats and sign-ins. */
 export function openCodeDataDir(env: NodeJS.ProcessEnv = process.env): string {

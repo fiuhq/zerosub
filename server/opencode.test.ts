@@ -93,7 +93,7 @@ describe("an OpenCode Go account", () => {
     expect(await login.finished).toEqual({ ok: true, message: null });
     expect(JSON.parse(await readFile(join(home, "opencode-go.json"), "utf8"))).toEqual({ key: "good" });
     expect((await stat(join(home, "opencode-go.json"))).mode & 0o777).toBe(0o600);
-    expect(fetched.at(-1)).toBe("https://opencode.ai/inference/go/openai/v1/models Bearer good");
+    expect(fetched.at(-1)).toBe("https://opencode.ai/zen/go/v1/models Bearer good");
   });
 });
 
