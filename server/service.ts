@@ -478,11 +478,12 @@ export class Service {
     if (!family) return;
     const adapter = this.adapters[family];
     const agentId = event.agent.id;
+    const endedAt = Date.now();
     const accountId = this.runningOn(await this.store.read(), agentId, family);
-    if (accountId) this.activeAt.set(accountId, Date.now());
+    if (accountId) this.activeAt.set(accountId, endedAt);
     if (event.outcome.kind !== "canceled") {
       const hit = adapter.detectLimit(event);
-      if (hit && (!hit.suspected || (accountId !== undefined && (await this.confirmFull(accountId))))) {
+      if (hit && (!hit.suspected || (accountId !== undefined && (await this.confirmFull(accountId, endedAt))))) {
         return this.handleUnavailable(context.paseo, agentId, family, event.timeline, { kind: "limit", hit });
       }
       if (adapter.detectSignOut(event) && (await this.confirmSignedOut(agentId, family))) {
@@ -506,11 +507,17 @@ export class Service {
     });
   }
 
-  /** A suspected limit is real only once a fresh, live reading shows one of the account's windows full. */
-  private async confirmFull(accountId: string): Promise<boolean> {
-    await withTimeout(this.refreshUsage(accountId, true), 12_000);
+  /** A suspected limit is real only once a live reading taken after the turn ended shows one of the account's windows full. */
+  private async confirmFull(accountId: string, endedAt: number): Promise<boolean> {
+    await withTimeout(this.refreshUsage(accountId, true, false, false), 12_000);
     const usage = this.usage.get(accountId);
-    return Boolean(usage && !usage.cached && !usage.error && usage.windows.some((window) => window.usedPercent >= 100));
+    return Boolean(
+      usage &&
+        !usage.cached &&
+        !usage.error &&
+        Date.parse(usage.fetchedAt) >= endedAt &&
+        usage.windows.some((window) => window.usedPercent >= 100),
+    );
   }
 
   /** Re-checks the account an agent was using; true when it really is signed out now. */
@@ -1385,8 +1392,11 @@ export class Service {
 
   // ------------------------------------------------------------------ usage
 
-  /** `renewLogin` lets the CLI refresh an expired sign-in first (explicit refreshes only: it's slow). */
-  refreshUsage(accountId: string, force = false, renewLogin = false): Promise<void> {
+  /**
+   * `renewLogin` lets the CLI refresh an expired sign-in first (explicit refreshes only: it's slow).
+   * `spaced = false` skips the adapter's spacing for a check that needs a reading taken now.
+   */
+  refreshUsage(accountId: string, force = false, renewLogin = false, spaced = true): Promise<void> {
     const pending = this.usageInFlight.get(accountId);
     if (pending) return pending;
     const now = Date.now();
@@ -1397,7 +1407,7 @@ export class Service {
       const account = findAccount(await this.store.read(), accountId);
       if (!account) return;
       const spacing = this.adapters[account.family].usageSpacingMs;
-      if (since < (force ? spacing : Math.max(spacing, 60_000))) return;
+      if (spaced && since < (force ? spacing : Math.max(spacing, 60_000))) return;
       this.usageAttemptAt.set(accountId, Date.now());
       const { retryAt, ...usage } = await this.adapters[account.family]
         .usage(account.home, { renewLogin })

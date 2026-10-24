@@ -31,11 +31,11 @@ afterEach(async () => {
 describe("Kimi sign-in", () => {
   it("follows the login's OAuth host to the global API, and defaults to mainland China", async () => {
     await writeFile(join(root, "config.toml"), '[services.managed]\nstorage = "file"\nkey = "oauth/kimi-code-global"\noauth_host = "https://auth.kimi.ai"\n');
-    expect(await readKimiSignIn(root)).toEqual({ name: "kimi-code-global", region: "global", keyring: false });
+    expect(await readKimiSignIn(root)).toEqual({ name: "kimi-code-global", region: "global" });
     expect(kimiBaseUrl("global", {})).toBe("https://api.kimi.ai/coding/v1");
     const empty = join(root, "empty");
     await mkdir(empty);
-    expect(await readKimiSignIn(empty)).toEqual({ name: "kimi-code", region: "mainland-cn", keyring: false });
+    expect(await readKimiSignIn(empty)).toEqual({ name: "kimi-code", region: "mainland-cn" });
     expect(kimiBaseUrl("mainland-cn", {})).toBe("https://api.kimi.com/coding/v1");
   });
 
@@ -45,28 +45,24 @@ describe("Kimi sign-in", () => {
     expect(kimiBaseUrl("global", { KIMI_CODE_BASE_URL: "https://proxy.example/v1/" })).toBe("https://proxy.example/v1");
   });
 
-  it("notices a login kept in the keyring", async () => {
-    await writeFile(join(root, "config.toml"), 'storage = "keyring"\nkey = "oauth/kimi-code"\n');
-    expect((await readKimiSignIn(root)).keyring).toBe(true);
-  });
-
-  it("reads the named token first, then any other", async () => {
+  it("reads only the token the sign-in names", async () => {
     await mkdir(join(root, "credentials"));
     await writeFile(join(root, "credentials", "other.json"), JSON.stringify({ access_token: "b", refresh_token: "rb", expires_at: 1 }));
-    expect((await readKimiToken(root, "kimi-code"))?.accessToken).toBe("b");
+    expect(await readKimiToken(root, "kimi-code")).toBeNull();
     await writeFile(join(root, "credentials", "kimi-code.json"), JSON.stringify({ access_token: "a", refresh_token: "ra", expires_at: 2 }));
     expect(await readKimiToken(root, "kimi-code")).toEqual({ accessToken: "a", refreshToken: "ra", expiresAt: 2 });
   });
 
   it("reads the link and code `kimi login` prints", () => {
     const output = [
-      "",
+      "A new version is available: https://github.com/MoonshotAI/kimi-code/releases",
       "Opening browser for Kimi device login: https://www.kimi.ai/code/authorize_device?user_code=ABCD-1234",
       "If the browser did not open, paste the URL above and enter code: ABCD-1234",
       "Code expires in 600s.",
     ].join("\n");
     expect(parseKimiLogin(output)).toEqual({ url: "https://www.kimi.ai/code/authorize_device?user_code=ABCD-1234", code: "ABCD-1234" });
     expect(parseKimiLogin("Starting…")).toBeNull();
+    expect(parseKimiLogin("A new version is available: https://github.com/MoonshotAI/kimi-code/releases")).toBeNull();
   });
 });
 
@@ -175,7 +171,7 @@ function account(id: string, kind: "main" | "managed"): StoredAccount {
   };
 }
 
-async function setUp(mainFiveHour: number) {
+async function setUp(mainFiveHour: () => number, usageSpacingMs = 0) {
   const store = new StateStore(join(root, "state.json"));
   await store.update((draft) =>
     Object.assign(draft, {
@@ -193,12 +189,12 @@ async function setUp(mainFiveHour: number) {
   const adapter = {
     family: "kimi",
     portable: true,
-    usageSpacingMs: 0,
+    usageSpacingMs,
     available: async () => ({ ok: true, detail: null }),
     prepareHome: async () => undefined,
     env: async (home: string | null) => ({ KIMI_CODE_HOME: home }),
     identity: async () => null,
-    usage: async (home: string | null) => reading(home ? 0 : mainFiveHour),
+    usage: async (home: string | null) => reading(home ? 0 : mainFiveHour()),
     redeemReset: async () => ({ outcome: "none", message: "none", left: null }),
     logout: async () => undefined,
     detectLimit: detectKimiLimit,
@@ -235,12 +231,12 @@ async function setUp(mainFiveHour: number) {
   service.setPreferences(preferences.schema.parse({}));
   const turn = (message: string) =>
     service.onTurnEnded({ agent: { id: AGENT, provider: "kimi" }, turnId: "t", outcome: { kind: "failed", error: { message } }, timeline: [] } as never, context);
-  return { store, reopened, turn };
+  return { service, store, reopened, turn };
 }
 
 describe("a suspected Kimi limit", () => {
   it("moves the agent once a fresh reading shows a full window", async () => {
-    const { store, reopened, turn } = await setUp(100);
+    const { store, reopened, turn } = await setUp(() => 100);
     await turn("429 Too Many Requests");
     expect(reopened).toEqual([AGENT]);
     const state = await store.read();
@@ -249,10 +245,19 @@ describe("a suspected Kimi limit", () => {
   });
 
   it("is a passing throttle while the reading still shows room", async () => {
-    const { store, reopened, turn } = await setUp(40);
+    const { store, reopened, turn } = await setUp(() => 40);
     await turn("429 Too Many Requests");
     expect(reopened).toEqual([]);
     expect((await store.read()).accounts.find((entry) => entry.id === MAIN)?.limitedUntil).toBeNull();
   });
-});
 
+  it("decides on a reading taken after the turn, not one from before it", async () => {
+    let percent = 97;
+    const { service, store, reopened, turn } = await setUp(() => percent, 60_000);
+    await service.refreshUsage(MAIN, true);
+    percent = 100;
+    await turn("429 Too Many Requests");
+    expect(reopened).toEqual([AGENT]);
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(SPARE);
+  });
+});

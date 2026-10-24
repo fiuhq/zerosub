@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { FAMILY_PORTABLE, type LoginMethod, type UsageWindow } from "../shared/model";
 import {
@@ -32,8 +32,6 @@ export interface KimiSignIn {
   /** `credentials/<name>.json`. */
   name: string;
   region: KimiRegion;
-  /** The CLI keeps this login in the OS keyring, which ZeroSub doesn't read. */
-  keyring: boolean;
 }
 
 /**
@@ -47,7 +45,7 @@ export async function readKimiSignIn(home: string): Promise<KimiSignIn> {
   const host = config.match(/^\s*oauth_host\s*=\s*"([^"]+)"/m)?.[1]?.replace(/\/+$/, "");
   const marker = (await readFile(join(home, "region"), "utf8").catch(() => "")).trim();
   const region: KimiRegion = host ? (host === GLOBAL_OAUTH_HOST ? "global" : "mainland-cn") : marker === "global" ? "global" : "mainland-cn";
-  return { name, region, keyring: /^\s*storage\s*=\s*"keyring"/m.test(config) };
+  return { name, region };
 }
 
 export function kimiBaseUrl(region: KimiRegion, env: NodeJS.ProcessEnv = process.env): string {
@@ -63,22 +61,18 @@ interface KimiToken {
 
 /** The stored token for a sign-in, read only: the CLI does every refresh itself. */
 export async function readKimiToken(home: string, name: string): Promise<KimiToken | null> {
-  const stored = (await readdir(join(home, "credentials")).catch(() => [] as string[])).filter((file) => file.endsWith(".json"));
-  const files = [`${name}.json`, ...stored.filter((file) => file !== `${name}.json`)];
-  for (const file of files) {
-    try {
-      const raw = JSON.parse(await readFile(join(home, "credentials", file), "utf8")) as Record<string, unknown>;
-      if (typeof raw.access_token !== "string") continue;
-      return {
-        accessToken: raw.access_token,
-        refreshToken: typeof raw.refresh_token === "string" ? raw.refresh_token : null,
-        expiresAt: typeof raw.expires_at === "number" ? raw.expires_at : 0,
-      };
-    } catch {
-      // Missing or half-written: try the next one.
-    }
+  try {
+    const raw = JSON.parse(await readFile(join(home, "credentials", `${name}.json`), "utf8")) as Record<string, unknown>;
+    if (typeof raw.access_token !== "string") return null;
+    return {
+      accessToken: raw.access_token,
+      refreshToken: typeof raw.refresh_token === "string" ? raw.refresh_token : null,
+      expiresAt: typeof raw.expires_at === "number" ? raw.expires_at : 0,
+    };
+  } catch {
+    // Missing or half-written.
+    return null;
   }
-  return null;
 }
 
 function isFresh(token: KimiToken | null, now = Date.now()): token is KimiToken {
@@ -177,9 +171,6 @@ export class KimiAdapter implements FamilyAdapter {
     const fetchedAt = new Date().toISOString();
     const root = home ?? mainKimiHome();
     const signIn = await readKimiSignIn(root);
-    if (signIn.keyring) {
-      return { fetchedAt, windows: [], error: "This login is kept in the system keyring, which ZeroSub can't read.", cached: false, resets: null };
-    }
     const token = await readKimiToken(root, signIn.name);
     if (!isFresh(token)) {
       return { fetchedAt, windows: [], error: "Usage shows after this account is next used.", cached: false, resets: null };
@@ -263,7 +254,7 @@ class KimiLogin extends ProgressEmitter implements LoginHandle {
  * "… paste the URL above and enter code: <code>". The link usually carries the code too.
  */
 export function parseKimiLogin(output: string): { url: string; code: string | null } | null {
-  const url = output.match(/device login:\s*(https:\/\/\S+)/i)?.[1] ?? output.match(/https:\/\/\S+/)?.[0];
+  const url = output.match(/device login:\s*(https:\/\/\S+)/i)?.[1];
   if (!url) return null;
   let fromUrl: string | null = null;
   try {
