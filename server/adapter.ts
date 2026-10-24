@@ -104,6 +104,8 @@ export interface FamilyAdapter {
   detectLimit(event: TurnEvent): LimitHit | null;
   /** Looks for a turn that failed because the account's login is no longer valid. */
   detectSignOut(event: TurnEvent): string | null;
+  /** A note for the user when the daemon's own environment overrides this provider's sign-in, else null. */
+  environmentWarning(env: NodeJS.ProcessEnv): string | null;
 }
 
 /** The environment for a process ZeroSub spawns against `patch`. */

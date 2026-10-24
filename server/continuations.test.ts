@@ -103,7 +103,8 @@ async function setup() {
   const switchTo = (id: string, account: string, runner = manager) => runner.continue(paseo, id, accounts.find((a) => a.id === account)!, "you switched accounts", "user");
   const adapter = {
     family: "codex", portable: false, usageSpacingMs: 0, detectLimit: () => ({ kind: "budget", resetsAt: new Date(Date.now() + 60_000).toISOString(), message: "limit" }),
-    detectSignOut: () => null, env: async (home: string) => ({ CODEX_HOME: home }), prepareHome: async () => {},
+    detectSignOut: () => null,
+    environmentWarning: () => null, env: async (home: string) => ({ CODEX_HOME: home }), prepareHome: async () => {},
     redeemReset: async () => ({ outcome: "reset", message: "Synthetic reset", left: 0 }),
   } as unknown as FamilyAdapter;
   const service = () => new Service({ codex: adapter, claude: adapter }, store, { resolve: async () => ({ codex: "codex" }) } as unknown as FamilyResolver);

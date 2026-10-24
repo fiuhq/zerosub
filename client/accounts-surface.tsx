@@ -4,7 +4,7 @@ import { SettingsCard, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { accountSubtitle, formatAge, formatPlan, usageSummary } from "../shared/format";
-import { FAMILY_LABEL, type AccountView, type Family } from "../shared/model";
+import { FAMILIES, FAMILY_HEADING, FAMILY_LABEL, FAMILY_PORTABLE, type AccountView, type Family } from "../shared/model";
 import { preferences } from "../shared/preferences";
 import {
   clearAccountLimit,
@@ -46,7 +46,6 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
   // Keep usage moving while the screen is open.
   useEffect(() => store.watch(VISIBLE_POLL_MS), [store]);
 
-  const families: Family[] = ["claude", "codex"];
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <ScrollView
@@ -113,7 +112,7 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
         {!state && !error ? <Text style={text.muted}>Loading accounts…</Text> : null}
 
         {state
-          ? families.map((family) => (
+          ? FAMILIES.map((family) => (
               <FamilySection
                 key={family}
                 family={family}
@@ -197,7 +196,7 @@ function FamilySection({
     <View style={{ gap: 10 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <Text style={text.heading} accessibilityRole="header">
-          {family === "claude" ? "Claude" : "ChatGPT (Codex)"}
+          {FAMILY_HEADING[family]}
         </Text>
         <Button
           theme={theme}
@@ -502,9 +501,9 @@ function AccountCard({
       <Modal title={`Remove ${account.label}?`} open={confirmRemove} onOpenChange={setConfirmRemove}>
         <Modal.Content>
           <Text style={text.body}>
-            {account.family === "claude"
+            {FAMILY_PORTABLE[account.family]
               ? "This signs the account out on this machine and deletes its saved login. Agents using it move to the default account; their conversations are kept."
-              : "This signs the account out on this machine and deletes its saved login. New agents use the default account. Existing ChatGPT conversations on it can't move, so start new agents for them."}
+              : `This signs the account out on this machine and deletes its saved login. New agents use the default account. Existing ${FAMILY_LABEL[account.family]} conversations on it can't move, so start new agents for them.`}
           </Text>
           <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
             <Button theme={theme} label="Cancel" tooltip="Keep this account" tooltipAlign="end" onPress={() => setConfirmRemove(false)} />

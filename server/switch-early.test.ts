@@ -172,6 +172,7 @@ function adapter(levels: Record<string, [fiveHour: number, weekly: number]>, rea
     logout: async () => undefined,
     detectLimit: () => null,
     detectSignOut: () => null,
+    environmentWarning: () => null,
   } as unknown as FamilyAdapter;
 }
 

@@ -177,6 +177,7 @@ const adapter = {
   logout: async () => undefined,
   detectLimit: () => null,
   detectSignOut: () => null,
+    environmentWarning: () => null,
 } as unknown as FamilyAdapter;
 
 async function setUp(state: Partial<StoredState> = {}, workspaceId = "wks_flxbl") {

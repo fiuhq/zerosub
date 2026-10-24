@@ -1,5 +1,5 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
-import type { Family } from "../shared/model";
+import { FAMILIES, type Family } from "../shared/model";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 
@@ -30,22 +30,26 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
+function isFamily(id: unknown): id is Family {
+  return (FAMILIES as readonly unknown[]).includes(id);
+}
+
 /**
- * Maps Paseo provider IDs to the subscription family they run on: the built-in `claude` and `codex`
- * providers, plus custom profiles that extend them without their own credentials.
+ * Maps Paseo provider IDs to the subscription family they run on: each family's built-in provider,
+ * plus custom profiles that extend one without their own credentials.
  */
 export function familiesFromConfig(providers: Record<string, unknown> | undefined): Record<string, Family> {
   const result: Record<string, Family> = {};
   const entries = providers ?? {};
-  for (const family of ["claude", "codex"] as const) {
+  for (const family of FAMILIES) {
     const entry = asRecord(entries[family]);
     if (!entry || !bringsOwnAuth(family, asRecord(entry.env))) result[family] = family;
   }
   for (const [id, value] of Object.entries(entries)) {
-    if (id === "claude" || id === "codex") continue;
+    if (isFamily(id)) continue;
     const entry = asRecord(value);
     const base = entry?.extends;
-    if (base !== "claude" && base !== "codex") continue;
+    if (!isFamily(base)) continue;
     if (bringsOwnAuth(base, asRecord(entry?.env))) continue;
     result[id] = base;
   }
@@ -66,7 +70,7 @@ export class FamilyResolver {
       value = familiesFromConfig(asRecord(config.providers));
     } catch (error) {
       console.warn("[ZeroSub] could not read provider config; using built-in providers only", describe(error));
-      value = { claude: "claude", codex: "codex" };
+      value = Object.fromEntries(FAMILIES.map((family) => [family, family]));
     }
     this.cache = { at: Date.now(), value };
     return value;

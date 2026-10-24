@@ -52,6 +52,7 @@ function claudeAdapter(hit: () => LimitHit): FamilyAdapter {
     logout: async () => undefined,
     detectLimit: (event: { outcome: { kind: string } }) => (event.outcome.kind === "failed" ? hit() : null),
     detectSignOut: () => null,
+    environmentWarning: () => null,
   } as unknown as FamilyAdapter;
 }
 
@@ -334,7 +335,7 @@ describe("forking to the other provider", () => {
         { agent: { id: AGENT, provider: "claude" }, turnId: "t", outcome: { kind: "failed", error: { message: "limit" } }, timeline: [] } as never,
         context,
       );
-    return { store, created, notes, limitTurn };
+    return { store, created, notes, limitTurn, paseo };
   }
 
   it("carries the work on with the other provider, at the same permission level", async () => {
@@ -356,6 +357,16 @@ describe("forking to the other provider", () => {
     await limitTurn();
     expect(created).toHaveLength(1);
     expect(notes.at(-1)).toMatchObject({ outcome: "continued", continuedIn: { agentId: created[0]?.agentId } });
+  });
+
+  it("names the provider it couldn't continue on when starting the new agent fails", async () => {
+    const { created, notes, limitTurn, paseo } = await setUpFork("bypassPermissions");
+    paseo.providers.listModes = async () => {
+      throw new Error("modes are unavailable");
+    };
+    await limitTurn();
+    expect(created).toHaveLength(0);
+    expect(notes.at(-1)).toMatchObject({ outcome: "stayed", detail: "Couldn't continue on ChatGPT: modes are unavailable" });
   });
 
   it("won't fork into a mode more permissive than the original's", async () => {
