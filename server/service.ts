@@ -776,7 +776,8 @@ export class Service {
           });
           return;
         }
-        console.log(`[ZeroSub] not continuing ${agentId} on another provider: ${result.skipped}`);
+        const tried = fallbackFamilies(family).map((other) => FAMILY_LABEL[other]).join(" or ");
+        console.log(`[ZeroSub] not continuing ${agentId} on ${tried || "another provider"}: ${result.skipped}`);
         detail = result.skipped;
       } else {
         const elsewhere = fallbackFamilies(family).find((other) =>
@@ -1101,7 +1102,10 @@ export class Service {
     }
     const skipped: string[] = [];
     for (const other of candidates) {
-      const result = await this.forkTo(paseo, agentId, family, other, families, state, timeline, source);
+      const result = await this.forkTo(paseo, agentId, family, other, families, state, timeline, source).catch((error: unknown) => {
+        if (source === "user") throw error;
+        return { skipped: `Couldn't continue on ${FAMILY_LABEL[other]}: ${describe(error)}` };
+      });
       if ("fork" in result) return result;
       skipped.push(result.skipped);
     }

@@ -11,9 +11,8 @@ describe("families", () => {
   });
 
   it("fall back to every other family, most preferred first", () => {
-    for (const family of FAMILIES) {
-      expect(fallbackFamilies(family)).toEqual(FALLBACK_ORDER.filter((other) => other !== family));
-    }
+    expect(fallbackFamilies("claude")).toEqual(["codex"]);
+    expect(fallbackFamilies("codex")).toEqual(["claude"]);
   });
 
   it("keep the CLI login ids and read the older two-family defaults", () => {
