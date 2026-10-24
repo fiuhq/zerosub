@@ -17,7 +17,7 @@ import {
   type Usage,
 } from "../shared/model";
 import { DEFAULT_CONTINUE_PROMPT, type Preferences } from "../shared/preferences";
-import type { RedeemResult, ReopenSummary } from "../shared/rpc";
+import type { ProjectOption, RedeemResult, ReopenSummary } from "../shared/rpc";
 import { SWITCH_ROW_KIND, SWITCH_ROW_VERSION, type SwitchRow } from "../shared/timeline";
 import {
   applyEnv,
@@ -41,7 +41,7 @@ import { homesDir } from "./paths";
 import { Reopener } from "./reopen";
 import { SwitchGuard } from "./switch-guard";
 import { loadReadings, mergeUsage, saveReadings, showLimit } from "./usage";
-import { chooseAccount, isLimited, isUsable, mostAvailable, nearlyFull, roomyAccount, type EarlyLines } from "./routing";
+import { chooseAccount, isLimited, isUsable, mostAvailable, nearlyFull, reservedElsewhere, roomyAccount, type EarlyLines } from "./routing";
 import {
   MAIN_ACCOUNT_ID,
   StateStore,
@@ -81,6 +81,8 @@ const PRUNE_MS = 10 * 60_000;
 /** After a reset, limit notices from turns that were already running are stale. */
 const RESET_GRACE_MS = 5 * 60_000;
 const AGENT_LIST_MS = 3_000;
+/** How long a workspace whose project couldn't be read waits before it is read again. */
+const UNKNOWN_PROJECT_MS = 60_000;
 /** How long a default change waits for sessions already being routed to record their account. */
 const ROUTING_WAIT_MS = 5_000;
 
@@ -119,6 +121,7 @@ interface AgentInfo {
   title: string | null;
   /** The agent this one carries on from, when ZeroSub started it as a continuation. */
   continuedFrom: string | null;
+  workspaceId: string | null;
 }
 
 type ReopenOutcome = "reopened" | "deferred" | "closed" | "failed";
@@ -164,6 +167,8 @@ export class Service {
   private readonly redeemLocks = new Map<string, Mutex>();
   private readonly browserSignIn = canSignInWithBrowser();
   private agentCache: { at: number; agents: Promise<AgentInfo[]> } | null = null;
+  /** Each workspace's Paseo project; a workspace never changes project, so only a failed read expires. */
+  private readonly workspaceProjects = new Map<string, { project: Promise<string | null>; until: number }>();
   private lastPrune = 0;
   private collecting = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -390,11 +395,13 @@ export class Service {
     const adapter = this.adapters[family];
     const now = Date.now();
     const state = await this.store.read();
+    const projectId = (await this.projectOf(context.paseo, request.workspaceId)) ?? state.sessions[request.agentId]?.projectId ?? null;
     const decision = chooseAccount(state, {
       agentId: request.agentId,
       family,
       reason: request.reason,
       now,
+      projectId,
       autoSwitch: this.prefs.autoSwitch,
       balanceNewAgents: this.prefs.balanceNewAgents,
       portable: adapter.portable,
@@ -410,14 +417,15 @@ export class Service {
     const interactive = request.purpose === "interactive";
     const seenBinding = state.bindings[request.agentId]?.accountId;
     const bindingChanged = decision.bind !== null && seenBinding !== decision.bind.accountId;
-    const sessionChanged = interactive && state.sessions[request.agentId]?.accountId !== account.id;
+    const recorded = state.sessions[request.agentId];
+    const sessionChanged = interactive && (recorded?.accountId !== account.id || (recorded?.projectId ?? null) !== projectId);
     if (bindingChanged || sessionChanged) {
       await this.store.update((draft) => {
         // Don't overwrite a choice the user made while this decision was being taken.
         if (decision.bind && bindingChanged && draft.bindings[request.agentId]?.accountId === seenBinding) {
           draft.bindings[request.agentId] = decision.bind;
         }
-        if (interactive) draft.sessions[request.agentId] = { accountId: account.id, family, openedAt: new Date(now).toISOString() };
+        if (interactive) draft.sessions[request.agentId] = { accountId: account.id, family, openedAt: new Date(now).toISOString(), projectId };
       });
     }
     // A fresh session already runs on the routed account, so any pending switch is done.
@@ -429,6 +437,30 @@ export class Service {
       })`,
     );
     return { ...request, env: applyEnv(await adapter.env(account.home), request.env) };
+  }
+
+  /** The Paseo project a workspace belongs to; null when it can't be read, so routing never waits on it twice. */
+  private projectOf(paseo: PaseoApi, workspaceId: string | null): Promise<string | null> {
+    if (!workspaceId) return Promise.resolve(null);
+    const known = this.workspaceProjects.get(workspaceId);
+    if (known && Date.now() < known.until) return known.project;
+    const project = withDeadline(paseo.workspaces.ref(workspaceId).refresh(), 5_000)
+      .then((workspace) => workspace?.projectId ?? null)
+      .catch((error: unknown) => {
+        log(`could not read the project of workspace ${workspaceId}`, error);
+        return null;
+      });
+    const entry = { project, until: Infinity };
+    this.workspaceProjects.set(workspaceId, entry);
+    void project.then((projectId) => {
+      if (!projectId) entry.until = Date.now() + UNKNOWN_PROJECT_MS;
+    });
+    return project;
+  }
+
+  /** Accounts set aside for projects other than this agent's. */
+  private reserved(state: StoredState, agentId: string): Set<string> {
+    return reservedElsewhere(state, state.sessions[agentId]?.projectId);
   }
 
   /** A turn uses the account from its first token, so a long one keeps its usage fresh too. */
@@ -523,7 +555,7 @@ export class Service {
       // Idle accounts are read rarely; read the candidates now so the pick rests on current numbers.
       const others = accountsOf(state, family).filter((other) => other.id !== accountId && isUsable(other, now));
       await withTimeout(Promise.allSettled(others.map((other) => this.refreshUsage(other.id, true))), 12_000);
-      const next = roomyAccount(state, family, (id) => this.usage.get(id), lines, Date.now(), new Set([accountId]));
+      const next = roomyAccount(state, family, (id) => this.usage.get(id), lines, Date.now(), new Set([...this.reserved(state, agentId), accountId]));
       if (!next) return;
       console.log(`[ZeroSub] ${account.label} is at ${Math.round(full.usedPercent)}% of its ${full.label} limit; moving ${agentId} to ${next.label} early`);
       await this.store.update((draft) => {
@@ -684,7 +716,7 @@ export class Service {
       }
       return;
     }
-    const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([account.id]));
+    const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([...this.reserved(latest, agentId), account.id]));
     if (!next) {
       if (problem.kind === "limit" && problem.hit.kind === "window" && this.prefs.autoRedeem && !account.disabled) {
         // Opt-in: every account is out, so spend a banked reset rather than stop.
@@ -746,7 +778,7 @@ export class Service {
         }
         console.log(`[ZeroSub] not continuing ${agentId} on ${FAMILY_LABEL[OTHER_FAMILY[family]]}: ${result.skipped}`);
         detail = result.skipped;
-      } else if (mostAvailable(latest, OTHER_FAMILY[family], (id) => this.usage.get(id), now, new Set())) {
+      } else if (mostAvailable(latest, OTHER_FAMILY[family], (id) => this.usage.get(id), now, this.reserved(latest, agentId))) {
         detail = `Or continue on ${FAMILY_LABEL[OTHER_FAMILY[family]]} in a new agent from the account button.`;
       }
       await this.appendRow(paseo, agentId, { ...base, to: account.label, reason: "exhausted", outcome: "stayed", detail });
@@ -1013,7 +1045,7 @@ export class Service {
         const now = Date.now();
         const latest = await this.store.read();
         if (this.runningOn(latest, agentId, family) !== accountId) continue;
-        const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([accountId]));
+        const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([...this.reserved(latest, agentId), accountId]));
         if (!next) return;
         await this.store.update((draft) => {
           draft.bindings[agentId] = { accountId: next.id, source: "auto", at: new Date(now).toISOString() };
@@ -1071,7 +1103,7 @@ export class Service {
       ? (await paseo.providers.listAvailable()).providers?.some((entry) => entry.provider === provider && entry.available)
       : false;
     if (!provider || !available) return { skipped: `${name} isn't available in Paseo on this host.` };
-    const account = mostAvailable(state, other, (id) => this.usage.get(id), Date.now(), new Set());
+    const account = mostAvailable(state, other, (id) => this.usage.get(id), Date.now(), this.reserved(state, agentId));
     if (!account) return { skipped: `Every ${name} account is at its limit too.` };
 
     const original = (await paseo.agents.ref(agentId).refresh())?.agent;
@@ -1192,6 +1224,7 @@ export class Service {
       balanceNewAgents: false,
       portable: this.adapters[family].portable,
       usageOf: (id) => this.usage.get(id),
+      projectId: state.sessions[agentId]?.projectId,
     })?.account.id;
   }
 
@@ -1423,6 +1456,9 @@ export class Service {
         usage: this.usage.get(account.id) ?? null,
         agentCount: counts.get(account.id) ?? 0,
         home: account.home,
+        projects: state.projects
+          .filter((rule) => rule.accountId === account.id)
+          .map((rule) => ({ projectId: rule.projectId, name: rule.name })),
       };
     });
 
@@ -1714,6 +1750,7 @@ export class Service {
         if (binding.accountId === accountId) delete draft.bindings[agentId];
       }
       if (draft.defaults[account.family] === accountId) draft.defaults[account.family] = null;
+      draft.projects = draft.projects.filter((rule) => rule.accountId !== accountId);
     });
     this.setUsage(accountId, null);
     // Idle agents move now and busy ones after their turn. The home is signed out and deleted by the
@@ -1721,6 +1758,65 @@ export class Service {
     await this.reconcile(paseo, "removed", affected, new Map([[account.id, account.label]]));
     void this.collectOrphanHomes(paseo).catch((error: unknown) => log("cleanup failed", error));
     return affected.length;
+  }
+
+  // ------------------------------------------------------------------ RPC: projects
+
+  /** Paseo's projects on this host, with the account each uses per provider. */
+  async listProjects(paseo: PaseoApi): Promise<ProjectOption[]> {
+    this.attach(paseo);
+    const [{ projects }, state] = await Promise.all([paseo.projects.list(), this.store.read()]);
+    return projects.map((project) => {
+      const accounts: Record<string, string> = {};
+      for (const rule of state.projects) {
+        const account = rule.projectId === project.projectId ? findAccount(state, rule.accountId) : undefined;
+        if (account) accounts[account.family] = account.id;
+      }
+      return { projectId: project.projectId, name: project.projectDisplayName, rootPath: project.projectRootPath, accounts };
+    });
+  }
+
+  /**
+   * Sets the projects whose agents use this account. A project has one account per provider, so
+   * claiming one here takes it from any other. Agents in the projects it touches drop the automatic
+   * placements that would hold them elsewhere and move now (busy ones after their turn); an account
+   * chosen for an agent, and a ChatGPT thread's own account, stay.
+   */
+  async setProjects(paseo: PaseoApi, accountId: string, projectIds: readonly string[]): Promise<ReopenSummary> {
+    this.attach(paseo);
+    const account = findAccount(await this.store.read(), accountId);
+    if (!account) throw new Error("That account no longer exists.");
+    const wanted = [...new Set(projectIds)];
+    const names = new Map((await paseo.projects.list()).projects.map((project) => [project.projectId, project.projectDisplayName]));
+    const unknown = wanted.filter((projectId) => !names.has(projectId));
+    const held = new Set((await this.store.read()).projects.filter((rule) => rule.accountId === accountId).map((rule) => rule.projectId));
+    const added = unknown.filter((projectId) => !held.has(projectId));
+    if (added.length > 0) throw new Error(`Paseo has no project ${added.join(", ")} on this host.`);
+    const kept = wanted.filter((projectId) => names.has(projectId));
+    // Agents opened before their project was recorded count as in it, so they move with it.
+    const live = await this.liveAgents(paseo);
+    const found = await Promise.all(live.map(async (agent) => [agent.id, await this.projectOf(paseo, agent.workspaceId)] as const));
+    await this.store.update((draft) => {
+      for (const [agentId, projectId] of found) {
+        const session = draft.sessions[agentId];
+        if (session && projectId && !session.projectId) session.projectId = projectId;
+      }
+      const touched = new Set([...kept, ...draft.projects.filter((rule) => rule.accountId === accountId).map((rule) => rule.projectId)]);
+      draft.projects = draft.projects.filter((rule) => {
+        if (rule.accountId === accountId) return false;
+        return !(kept.includes(rule.projectId) && findAccount(draft, rule.accountId)?.family === account.family);
+      });
+      for (const projectId of kept) draft.projects.push({ projectId, accountId, name: names.get(projectId) ?? null });
+      for (const [agentId, binding] of Object.entries(draft.bindings)) {
+        const projectId = draft.sessions[agentId]?.projectId;
+        const family = findAccount(draft, binding.accountId)?.family;
+        if (!projectId || !family || !this.adapters[family].portable || (binding.source !== "auto" && binding.source !== "balance")) continue;
+        // Agents of other projects leave an account now set aside for these ones.
+        const offReserved = binding.accountId === accountId && kept.length > 0 && !kept.includes(projectId);
+        if (touched.has(projectId) || offReserved) delete draft.bindings[agentId];
+      }
+    });
+    return this.reconcile(paseo, "project");
   }
 
   // ------------------------------------------------------------------ RPC: sign-in
@@ -1933,6 +2029,7 @@ function toAgentInfo(agent: AgentSnapshot): AgentInfo {
     hasHistory: Boolean(agent.lastUserMessageAt),
     title: agent.title ?? null,
     continuedFrom: agent.labels?.[CONTINUED_FROM_LABEL] ?? null,
+    workspaceId: agent.workspaceId ?? null,
   };
 }
 
@@ -1964,6 +2061,24 @@ async function listAgents(paseo: PaseoApi, includeArchived: boolean): Promise<{ 
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** `task`'s result, or a rejection once `ms` pass without one. */
+function withDeadline<T>(task: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer within ${ms} ms`)), ms);
+    timer.unref?.();
+    task.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 async function withTimeout(task: Promise<unknown>, ms: number): Promise<void> {

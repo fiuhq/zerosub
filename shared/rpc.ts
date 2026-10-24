@@ -53,6 +53,27 @@ export const ReopenSummarySchema = z.object({
 });
 export type ReopenSummary = z.infer<typeof ReopenSummarySchema>;
 
+export const ProjectOptionSchema = z.object({
+  projectId: z.string(),
+  name: z.string(),
+  rootPath: z.string(),
+  /** The account this project's agents use, by provider. */
+  accounts: z.record(z.string(), z.string()),
+});
+export type ProjectOption = z.infer<typeof ProjectOptionSchema>;
+
+export const listProjects = defineRpc({
+  name: "zerosub.projects.list",
+  input: z.object({}),
+  output: z.object({ projects: z.array(ProjectOptionSchema) }),
+});
+
+export const setAccountProjects = defineRpc({
+  name: "zerosub.accounts.projects",
+  input: z.object({ accountId: z.string(), projectIds: z.array(z.string()) }),
+  output: ReopenSummarySchema,
+});
+
 export const clearAccountLimit = defineRpc({
   name: "zerosub.accounts.available",
   input: z.object({ accountId: z.string() }),

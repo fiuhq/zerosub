@@ -8,10 +8,13 @@ import { FAMILY_LABEL, type AccountView, type Family } from "../shared/model";
 import { preferences } from "../shared/preferences";
 import {
   clearAccountLimit,
+  listProjects,
   removeAccount,
   renameAccount,
   setAccountEnabled,
+  setAccountProjects,
   setDefaultAccount,
+  type ProjectOption,
   type ReopenSummary,
 } from "../shared/rpc";
 import { AddAccountModal } from "./add-account";
@@ -242,6 +245,7 @@ function AccountCard({
   const toast = useToast();
   const [busy, setBusy] = useState<"default" | "remove" | "clear" | "toggle" | null>(null);
   const [renaming, setRenaming] = useState(false);
+  const [choosingProjects, setChoosingProjects] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const resets = account.usage?.resets ?? null;
@@ -368,6 +372,13 @@ function AccountCard({
             busy={busy === "toggle"}
             onPress={() => void toggle()}
           />
+          <IconButton
+            theme={theme}
+            icon="FolderKanban"
+            label="Projects"
+            tooltip="Projects: pick the Paseo projects whose agents use this account"
+            onPress={() => setChoosingProjects(true)}
+          />
           <IconButton theme={theme} icon="Pencil" label="Rename" tooltip="Rename this account" onPress={() => setRenaming(true)} />
           {account.kind !== "main" ? (
             <IconButton
@@ -391,6 +402,9 @@ function AccountCard({
         {account.status === "limited" ? <Badge theme={theme} label="Limit reached" tone="danger" /> : null}
         {account.status === "signed_out" ? <Badge theme={theme} label="Signed out" tone="warning" /> : null}
         {resets && !signedOut ? <Badge theme={theme} label={resetBadge(resets)} tone="accent" /> : null}
+        {account.projects.map((project) => (
+          <Badge key={project.projectId} theme={theme} label={project.name ?? project.projectId} tone="accent" />
+        ))}
       </View>
 
       <View style={[{ gap: 10 }, faded]}>
@@ -481,6 +495,9 @@ function AccountCard({
 
       {renaming ? (
         <RenameModal theme={theme} account={account} store={store} onClose={() => setRenaming(false)} />
+      ) : null}
+      {choosingProjects ? (
+        <ProjectsModal theme={theme} account={account} store={store} onClose={() => setChoosingProjects(false)} />
       ) : null}
       <Modal title={`Remove ${account.label}?`} open={confirmRemove} onOpenChange={setConfirmRemove}>
         <Modal.Content>
@@ -575,6 +592,109 @@ function RenameModal({
             tooltipAlign="end"
             busy={saving}
             disabled={!label.trim()}
+            onPress={() => void save()}
+          />
+        </View>
+      </Modal.Content>
+    </Modal>
+  );
+}
+
+/** Picks the Paseo projects whose agents use this account; each project has one account per provider. */
+function ProjectsModal({
+  theme,
+  account,
+  store,
+  onClose,
+}: {
+  theme: Theme;
+  account: AccountView;
+  store: ZeroSubStore;
+  onClose(): void;
+}) {
+  const text = useText(theme);
+  const toast = useToast();
+  const [projects, setProjects] = useState<ProjectOption[] | null>(null);
+  const [chosen, setChosen] = useState<Set<string>>(() => new Set(account.projects.map((project) => project.projectId)));
+  const [saving, setSaving] = useState(false);
+  const { state } = useStore(store);
+  const labels = useMemo(() => new Map(state?.accounts.map((entry) => [entry.id, entry.label]) ?? []), [state]);
+  useEffect(() => {
+    let live = true;
+    store
+      .rpc(listProjects, {})
+      .then((result) => {
+        if (!live) return;
+        const listed = new Set(result.projects.map((project) => project.projectId));
+        setProjects(result.projects);
+        setChosen((current) => new Set([...current].filter((projectId) => listed.has(projectId))));
+      })
+      .catch((error: unknown) => live && toast.error(describe(error)));
+    return () => {
+      live = false;
+    };
+  }, [store, toast]);
+  const save = useCallback(async () => {
+    setSaving(true);
+    try {
+      const summary = await store.rpc(setAccountProjects, { accountId: account.id, projectIds: [...chosen] });
+      toast.show(describeReopen(`${account.label}'s projects are saved`, summary), { variant: "success" });
+      await store.refresh();
+      onClose();
+    } catch (error) {
+      toast.error(describe(error));
+    } finally {
+      setSaving(false);
+    }
+  }, [account, chosen, store, onClose, toast]);
+  return (
+    <Modal title={`Projects for ${account.label}`} open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <Modal.Content>
+        <Text style={text.muted}>
+          Agents in these projects use {account.label}, and agents in other projects stay off it. A limit or switch early can
+          still move them to an account no other project has.
+        </Text>
+        {projects === null ? (
+          <Text style={text.small}>Loading projects…</Text>
+        ) : projects.length === 0 ? (
+          <Text style={text.small}>Paseo has no projects on this host yet.</Text>
+        ) : (
+          <ScrollView style={{ maxHeight: 360 }}>
+            <SettingsCard>
+              {projects.map((project) => {
+                const owner = project.accounts[account.family];
+                const elsewhere = owner && owner !== account.id ? labels.get(owner) ?? owner : null;
+                return (
+                  <SettingsSwitch
+                    key={project.projectId}
+                    label={project.name}
+                    hint={elsewhere ? `${project.rootPath} · uses ${elsewhere} now; turning this on moves it here` : project.rootPath}
+                    value={chosen.has(project.projectId)}
+                    disabled={saving}
+                    onValueChange={(on) =>
+                      setChosen((current) => {
+                        const next = new Set(current);
+                        if (on) next.add(project.projectId);
+                        else next.delete(project.projectId);
+                        return next;
+                      })
+                    }
+                  />
+                );
+              })}
+            </SettingsCard>
+          </ScrollView>
+        )}
+        <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
+          <Button theme={theme} label="Cancel" tooltip="Keep the projects as they are" tooltipAlign="end" onPress={onClose} />
+          <Button
+            theme={theme}
+            tone="primary"
+            label="Save"
+            tooltip="Save these projects; their open agents move now"
+            tooltipAlign="end"
+            busy={saving}
+            disabled={projects === null}
             onPress={() => void save()}
           />
         </View>

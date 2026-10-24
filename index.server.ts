@@ -14,6 +14,8 @@ import {
   setDefaultAccount,
   setAccountEnabled,
   forkAgent,
+  listProjects,
+  setAccountProjects,
   startLogin,
   submitLoginCode,
 } from "./shared/rpc";
@@ -85,6 +87,8 @@ export default function contribute(server: PluginServerContext) {
   server.handle(setAgentAccount, ({ agentId, accountId }, { paseo }) => service.setAgentAccount(paseo, agentId, accountId));
   server.handle(forkAgent, ({ agentId }, { paseo }) => service.forkAgent(paseo, agentId));
   server.handle(setAccountEnabled, ({ accountId, enabled }, { paseo }) => service.setAccountEnabled(paseo, accountId, enabled));
+  server.handle(listProjects, async (_input, { paseo }) => ({ projects: await service.listProjects(paseo) }));
+  server.handle(setAccountProjects, ({ accountId, projectIds }, { paseo }) => service.setProjects(paseo, accountId, projectIds));
 
   return async () => {
     stopSettings();

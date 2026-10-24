@@ -46,6 +46,8 @@ export const LiveSessionSchema = z.object({
   accountId: z.string(),
   family: FamilySchema,
   openedAt: z.string(),
+  /** The Paseo project the agent's workspace belongs to, when known. */
+  projectId: z.string().nullable().optional(),
 });
 export type LiveSession = z.infer<typeof LiveSessionSchema>;
 
@@ -75,6 +77,15 @@ export const ContinuationChainSchema = z.object({
 });
 export type ContinuationChain = z.infer<typeof ContinuationChainSchema>;
 
+/** A Paseo project whose agents use this account (one account per provider per project). */
+export const ProjectRuleSchema = z.object({
+  projectId: z.string(),
+  accountId: z.string(),
+  /** The project's name when it was assigned, for display. */
+  name: z.string().nullable().default(null),
+});
+export type ProjectRule = z.infer<typeof ProjectRuleSchema>;
+
 export const StoredStateSchema = z.object({
   version: z.literal(1).default(1),
   accounts: z.array(StoredAccountSchema).default([]),
@@ -86,6 +97,7 @@ export const StoredStateSchema = z.object({
   /** Which account each agent's live provider session was opened with. */
   sessions: z.record(z.string(), LiveSessionSchema).default({}),
   continuations: z.record(z.string(), ContinuationChainSchema).default({}),
+  projects: z.array(ProjectRuleSchema).default([]),
 });
 export type StoredState = z.infer<typeof StoredStateSchema>;
 
@@ -130,6 +142,9 @@ export function salvageState(raw: unknown): { state: StoredState; dropped: boole
       bindings: records(BindingSchema, source.bindings),
       sessions: records(LiveSessionSchema, source.sessions),
       continuations: records(ContinuationChainSchema, source.continuations),
+      projects: (Array.isArray(source.projects) ? source.projects : [])
+        .map((entry) => keep(ProjectRuleSchema, entry))
+        .filter((entry): entry is ProjectRule => entry !== undefined),
     },
     dropped: true,
   };
