@@ -124,7 +124,7 @@ ZeroSub never implements OAuth itself and never copies credentials between accou
 
 ## Privacy and security
 
-- Credentials stay in the CLIs' own stores. ZeroSub's registry (`$PASEO_HOME/zerosub/state.json`) holds account names, emails, plans, which agent uses which account, and continuation links with timeline positions. Handoff text stays in the agents' conversation histories; it isn't copied into the registry.
+- Credentials stay in the CLIs' own stores. ZeroSub's registry (`$PASEO_HOME/zerosub/state.json`) holds account names, emails, plans, which agent uses which account, which Paseo projects use which account, and continuation links with timeline positions. Handoff text stays in the agents' conversation histories; it isn't copied into the registry.
 - To show Claude usage, ZeroSub reads each account's current access token and calls Anthropic's usage endpoint, the same way Paseo's built-in usage display and `/usage` do. It never logs or stores tokens and never refreshes them itself. When you refresh usage (the ↻ button beside the title) or use a reset and a token has expired, it runs `claude -p /usage` so Claude Code renews its own sign-in. Codex usage comes from `codex app-server`.
 - Using a banked reset calls the provider's own reset endpoint with that account's sign-in, and only after you confirm (or turn on automatic use).
 - Removing an account moves its agents to the default account, then signs it out (`claude auth logout` / `codex` logout) and deletes its home. This happens once no agent is mid-turn on it. Abandoned sign-ins are cleaned up the same way.
@@ -150,7 +150,7 @@ npm install
 paseo plugin install "$(pwd)"   # run the working copy
 
 npm run typecheck      # client and server bundles, separately
-npm test               # routing, failover, limit detection, usage, resets, forks
+npm test               # routing, projects, failover, limit detection, usage, resets, forks
 npm run audit:mobile   # no DOM/HTML in client code
 paseo plugin reload zerosub
 paseo plugin logs zerosub
