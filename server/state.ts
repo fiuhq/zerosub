@@ -1,6 +1,6 @@
 import { copyFile } from "node:fs/promises";
 import { z } from "zod";
-import { AccountKindSchema, FamilySchema, type Family } from "../shared/model";
+import { AccountKindSchema, FAMILIES, FamilySchema, type Family } from "../shared/model";
 import { Mutex, readJson, writeJsonAtomic } from "./json-file";
 import { statePath } from "./paths";
 
@@ -89,9 +89,8 @@ export type ProjectRule = z.infer<typeof ProjectRuleSchema>;
 export const StoredStateSchema = z.object({
   version: z.literal(1).default(1),
   accounts: z.array(StoredAccountSchema).default([]),
-  defaults: z
-    .object({ claude: z.string().nullable().default(null), codex: z.string().nullable().default(null) })
-    .default({ claude: null, codex: null }),
+  /** The default account of each family, by family. */
+  defaults: z.record(z.string(), z.string().nullable()).default({}),
   /** Per-agent overrides of the default account. */
   bindings: z.record(z.string(), BindingSchema).default({}),
   /** Which account each agent's live provider session was opened with. */
@@ -101,7 +100,7 @@ export const StoredStateSchema = z.object({
 });
 export type StoredState = z.infer<typeof StoredStateSchema>;
 
-export const MAIN_ACCOUNT_ID: Record<Family, string> = { claude: "claude-main", codex: "codex-main" };
+export const MAIN_ACCOUNT_ID = Object.fromEntries(FAMILIES.map((family) => [family, `${family}-main`])) as Record<Family, string>;
 
 export function emptyState(): StoredState {
   return StoredStateSchema.parse({});
@@ -133,7 +132,7 @@ export function salvageState(raw: unknown): { state: StoredState; dropped: boole
     }
     return result;
   };
-  const defaults = keep(StoredStateSchema.shape.defaults, source.defaults) ?? { claude: null, codex: null };
+  const defaults = keep(StoredStateSchema.shape.defaults, source.defaults) ?? {};
   return {
     state: {
       version: 1,

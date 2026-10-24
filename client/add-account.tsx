@@ -3,7 +3,7 @@ import { copyText, Modal, TextInput, useToast } from "@getpaseo/plugin/client/re
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { formatPlan } from "../shared/format";
-import { FAMILY_LABEL, type Family, type LoginMethod, type LoginView } from "../shared/model";
+import { FAMILY_LABEL, FAMILY_SIGN_IN, type Family, type LoginMethod, type LoginView } from "../shared/model";
 import { cancelLogin, startLogin, submitLoginCode } from "../shared/rpc";
 import { describe, useStore, type ZeroSubStore } from "./store";
 import { Button, useText } from "./ui";
@@ -80,11 +80,11 @@ export function AddAccountModal({
     onClose();
   }, [loginId, finished, store, onClose]);
 
-  // Claude's flow serves both links at once; ChatGPT needs a fresh flow to switch.
+  // A paste flow serves both links at once; a switchable one needs a fresh flow to switch.
   const switchMethod = useCallback(
     (next: LoginMethod) => {
       setMethod(next);
-      if (family === "codex") void begin(next);
+      if (FAMILY_SIGN_IN[family] === "switchable") void begin(next);
     },
     [family, begin],
   );
@@ -201,8 +201,8 @@ function SignInSteps({
   const [submitting, setSubmitting] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
 
-  // Claude: the browser link completes by itself; the code link works from any device.
-  const pasteFlow = family === "claude" && (method === "code" || !login.url) && Boolean(login.codeUrl);
+  // Paste flow: the browser link completes by itself; the code link works from any device.
+  const pasteFlow = FAMILY_SIGN_IN[family] === "paste" && (method === "code" || !login.url) && Boolean(login.codeUrl);
   const link = pasteFlow ? login.codeUrl : login.url ?? login.codeUrl;
 
   const open = useCallback(() => {
@@ -247,8 +247,8 @@ function SignInSteps({
     [theme],
   );
 
-  const service = family === "claude" ? "Claude" : "ChatGPT";
-  const canSwitch = browserUsable && (family === "codex" || (Boolean(login.url) && Boolean(login.codeUrl)));
+  const service = FAMILY_LABEL[family];
+  const canSwitch = browserUsable && (FAMILY_SIGN_IN[family] === "switchable" || (Boolean(login.url) && Boolean(login.codeUrl)));
   return (
     <View style={{ gap: 16 }}>
       <Step theme={theme} number={1} title={`Open the ${service} sign-in page`}>

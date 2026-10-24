@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { LoginMethod, ResetOffer, Usage, UsageWindow } from "../shared/model";
+import { FAMILY_PORTABLE, type LoginMethod, type ResetOffer, type Usage, type UsageWindow } from "../shared/model";
 import {
   ProgressEmitter,
   spawnEnv,
@@ -198,7 +198,7 @@ interface Snapshot {
 export class CodexAdapter implements FamilyAdapter {
   readonly family = "codex" as const;
   /** ChatGPT accounts can't decrypt each other's reasoning, so threads stay on their account. */
-  readonly portable = false;
+  readonly portable = FAMILY_PORTABLE.codex;
   readonly usageSpacingMs = 20_000;
   private readonly snapshots = new Map<string, { at: number; pending: boolean; value: Promise<Snapshot> }>();
 
@@ -370,6 +370,12 @@ export class CodexAdapter implements FamilyAdapter {
 
   detectLimit = detectCodexLimit;
   detectSignOut = detectCodexSignOut;
+
+  environmentWarning(env: NodeJS.ProcessEnv): string | null {
+    return env.CODEX_ACCESS_TOKEN
+      ? "The daemon's environment sets CODEX_ACCESS_TOKEN. Codex agents on your CLI login use it instead of a ChatGPT sign-in."
+      : null;
+  }
 }
 
 class CodexLogin extends ProgressEmitter implements LoginHandle {

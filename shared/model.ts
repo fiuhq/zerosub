@@ -1,13 +1,60 @@
 import { z } from "zod";
 
-/** The two subscription families this plugin manages. Custom provider profiles map onto one of them. */
+/**
+ * The subscription families this plugin manages, one adapter each. Custom provider profiles map onto
+ * one of them. Adding a family means a value here, a row in each table below, and its adapter.
+ */
 export const FamilySchema = z.enum(["claude", "codex"]);
 export type Family = z.infer<typeof FamilySchema>;
+export const FAMILIES: readonly Family[] = FamilySchema.options;
 
+/** The subscription, as people name it. */
 export const FAMILY_LABEL: Record<Family, string> = {
   claude: "Claude",
   codex: "ChatGPT",
 };
+
+/** Section headings on the Accounts screen. */
+export const FAMILY_HEADING: Record<Family, string> = {
+  claude: "Claude",
+  codex: "ChatGPT (Codex)",
+};
+
+/** The CLI that signs in and runs the agents. */
+export const FAMILY_CLI: Record<Family, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+};
+
+/**
+ * Whether a conversation can move to another account of its provider in place. ChatGPT encrypts its
+ * reasoning per account, so a Codex thread with history carries on in a new agent instead.
+ */
+export const FAMILY_PORTABLE: Record<Family, boolean> = {
+  claude: true,
+  codex: false,
+};
+
+/**
+ * How signing in works. `paste`: one link finishes by itself on the host and another shows a code to
+ * paste back, both from the same flow. `switchable`: a browser callback or a device code typed on the
+ * provider's page, each its own flow, so switching method starts a new one.
+ */
+export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable"> = {
+  claude: "paste",
+  codex: "switchable",
+};
+
+/**
+ * Providers a stopped chat can carry on with when every account of its own is out, most preferred
+ * first. The first that is installed and has a usable account takes over in a new agent.
+ */
+export const FALLBACK_ORDER: readonly Family[] = ["claude", "codex"];
+
+/** The providers a `from` agent can carry on with, most preferred first. */
+export function fallbackFamilies(from: Family): Family[] {
+  return FALLBACK_ORDER.filter((family) => family !== from);
+}
 
 export const UsageWindowSchema = z.object({
   /** Stable key, e.g. `five_hour`, `seven_day`, `seven_day_opus`, `primary`, `secondary`. */

@@ -7,7 +7,10 @@ import type {
   PluginSessionOpenRequest,
 } from "@getpaseo/plugin/server";
 import {
+  FAMILIES,
+  FAMILY_CLI,
   FAMILY_LABEL,
+  fallbackFamilies,
   type AccountView,
   type AgentRoute,
   type Family,
@@ -57,9 +60,6 @@ import {
 type PaseoApi = PluginHookContext["paseo"];
 type TurnEnded = PluginLifecycleEvents["agent.turn_ended"];
 
-const FAMILIES: readonly Family[] = ["claude", "codex"];
-const PROVIDER_NAME: Record<Family, string> = { claude: "Claude Code", codex: "Codex" };
-const OTHER_FAMILY: Record<Family, Family> = { claude: "codex", codex: "claude" };
 /** How often to read usage: accounts in use, the defaults, and the rest. Adapters space reads further. */
 const USAGE_BUSY_MS = 60_000;
 const USAGE_DEFAULT_MS = 5 * 60_000;
@@ -146,7 +146,7 @@ export class Service {
   private readonly identityCheckedAt = new Map<string, number>();
   private readonly availability = new Map<Family, { ok: boolean; detail: string | null; at: number }>();
   private readonly logins = new Map<string, LoginSession>();
-  private readonly loginLocks: Record<Family, Mutex> = { claude: new Mutex(), codex: new Mutex() };
+  private readonly loginLocks = Object.fromEntries(FAMILIES.map((family) => [family, new Mutex()])) as Record<Family, Mutex>;
   /** Agents whose account changed mid-turn; reopened when the turn ends. */
   private readonly deferred = new Map<string, SwitchRow | null>();
   /** Agents in the middle of a failover, so nothing else moves them at the same time. */
@@ -330,7 +330,7 @@ export class Service {
       }
       for (const name of names) {
         const home = join(root, name);
-        const family: Family | null = name.startsWith("claude-") ? "claude" : name.startsWith("codex-") ? "codex" : null;
+        const family = FAMILIES.find((candidate) => name.startsWith(`${candidate}-`)) ?? null;
         if (!family || owned.has(home)) continue;
         // A managed account's ID is its home's folder name, so sessions still name it after removal.
         const users = Object.entries(state.sessions)
@@ -761,7 +761,7 @@ export class Service {
       if (this.prefs.forkOtherProvider) {
         // Opt-in: every account of this provider is out, so carry on with the other provider.
         const result = await this.forkToOtherProvider(paseo, agentId, family, timeline, "auto").catch((error: unknown) => ({
-          skipped: `Couldn't continue on ${FAMILY_LABEL[OTHER_FAMILY[family]]}: ${describe(error)}`,
+          skipped: `Couldn't continue on another provider: ${describe(error)}`,
         }));
         if ("fork" in result) {
           this.switchGuard.note(agentId, now);
@@ -776,10 +776,13 @@ export class Service {
           });
           return;
         }
-        console.log(`[ZeroSub] not continuing ${agentId} on ${FAMILY_LABEL[OTHER_FAMILY[family]]}: ${result.skipped}`);
+        console.log(`[ZeroSub] not continuing ${agentId} on another provider: ${result.skipped}`);
         detail = result.skipped;
-      } else if (mostAvailable(latest, OTHER_FAMILY[family], (id) => this.usage.get(id), now, this.reserved(latest, agentId))) {
-        detail = `Or continue on ${FAMILY_LABEL[OTHER_FAMILY[family]]} in a new agent from the account button.`;
+      } else {
+        const elsewhere = fallbackFamilies(family).find((other) =>
+          mostAvailable(latest, other, (id) => this.usage.get(id), now, this.reserved(latest, agentId)),
+        );
+        if (elsewhere) detail = `Or continue on ${FAMILY_LABEL[elsewhere]} in a new agent from the account button.`;
       }
       await this.appendRow(paseo, agentId, { ...base, to: account.label, reason: "exhausted", outcome: "stayed", detail });
       return;
@@ -1084,20 +1087,40 @@ export class Service {
     timeline: readonly AgentTimelineItem[] | undefined,
     source: "auto" | "user",
   ): Promise<{ fork: Continuation; account: StoredAccount; family: Family } | { skipped: string }> {
-    const other = OTHER_FAMILY[family];
-    const name = FAMILY_LABEL[other];
+    const candidates = fallbackFamilies(family);
+    if (candidates.length === 0) return { skipped: "No other provider is set up." };
     const families = await this.families.resolve(paseo);
     const state = await this.store.read();
-    // Prompting the original again while it's still out mustn't start a second copy of the work.
-    const earlier = (await listAgents(paseo, false)).agents.find(
-      (agent) => agent.continuedFrom === agentId && families[agent.provider] === other,
-    );
-    const earlierAccount = earlier && (findAccount(state, state.bindings[earlier.id]?.accountId) ?? mainAccount(state, other));
-    if (earlier && earlierAccount) {
-      return { fork: { agentId: earlier.id, title: earlier.title ?? `${name} agent` }, account: earlierAccount, family: other };
+    // Prompting the original again while it's still out mustn't start a second copy of the work,
+    // whichever provider took it over.
+    for (const agent of (await listAgents(paseo, false)).agents) {
+      const other = families[agent.provider];
+      if (agent.continuedFrom !== agentId || !other || !candidates.includes(other)) continue;
+      const account = findAccount(state, state.bindings[agent.id]?.accountId) ?? mainAccount(state, other);
+      if (account) return { fork: { agentId: agent.id, title: agent.title ?? `${FAMILY_LABEL[other]} agent` }, account, family: other };
     }
+    const skipped: string[] = [];
+    for (const other of candidates) {
+      const result = await this.forkTo(paseo, agentId, family, other, families, state, timeline, source);
+      if ("fork" in result) return result;
+      skipped.push(result.skipped);
+    }
+    return { skipped: skipped.join(" ") };
+  }
 
-    if (this.availability.get(other)?.ok === false) return { skipped: `${PROVIDER_NAME[other]} isn't installed where the daemon runs.` };
+  /** Carries the work on in a new agent on `other`, or says why it can't. */
+  private async forkTo(
+    paseo: PaseoApi,
+    agentId: string,
+    family: Family,
+    other: Family,
+    families: Record<string, Family>,
+    state: StoredState,
+    timeline: readonly AgentTimelineItem[] | undefined,
+    source: "auto" | "user",
+  ): Promise<{ fork: Continuation; account: StoredAccount; family: Family } | { skipped: string }> {
+    const name = FAMILY_LABEL[other];
+    if (this.availability.get(other)?.ok === false) return { skipped: `${FAMILY_CLI[other]} isn't installed where the daemon runs.` };
     const provider = families[other] === other ? other : Object.keys(families).find((id) => families[id] === other);
     const available = provider
       ? (await paseo.providers.listAvailable()).providers?.some((entry) => entry.provider === provider && entry.available)
@@ -1125,7 +1148,7 @@ export class Service {
       sourceAgentId: agentId,
       timeline,
       why: source === "auto" ? `every ${FAMILY_LABEL[family]} account reached its usage limit` : `the work was moved to ${name}`,
-      previous: PROVIDER_NAME[family],
+      previous: FAMILY_CLI[family],
       target: { provider, label: name, modeId },
       bind: async (newAgentId) => {
         await this.store.update((draft) => {
@@ -1162,7 +1185,7 @@ export class Service {
     const info = await agentInfo(paseo, agentId);
     if (!info || info.archived) throw new Error("That agent is no longer available.");
     const family = (await this.families.resolve(paseo))[info.provider];
-    if (!family) throw new Error(`${info.provider} agents don't use Claude or ChatGPT subscription accounts.`);
+    if (!family) throw new Error(`${info.provider} agents don't use a subscription account ZeroSub manages.`);
     if (info.status === "running" || info.status === "initializing") {
       throw new Error("This agent is working right now. Wait for its turn to finish, then continue it elsewhere.");
     }
@@ -1193,7 +1216,8 @@ export class Service {
     timeline: readonly AgentTimelineItem[] | undefined,
     source: "auto" | "user",
   ): Promise<Continuation> {
-    if (target.family === "codex") return this.continuations.continue(paseo, agentId, target, why, source);
+    // Only a conversation that can't change accounts in place needs a continuation tab.
+    if (!this.adapters[target.family].portable) return this.continuations.continue(paseo, agentId, target, why, source);
     return continueInNewAgent({
       paseo,
       sourceAgentId: agentId,
@@ -1498,17 +1522,11 @@ export class Service {
       const availability = this.availability.get(family);
       if (availability && !availability.ok) {
         warnings.push(
-          `${PROVIDER_NAME[family]} isn't installed where the daemon can run it${availability.detail ? ` (${availability.detail})` : ""}. Install it to add ${FAMILY_LABEL[family]} accounts.`,
+          `${FAMILY_CLI[family]} isn't installed where the daemon can run it${availability.detail ? ` (${availability.detail})` : ""}. Install it to add ${FAMILY_LABEL[family]} accounts.`,
         );
       }
-    }
-    if (process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY) {
-      warnings.push(
-        "The daemon's environment sets a Claude API key or token. Agents on your CLI login use it; agents on added accounts use their own sign-in.",
-      );
-    }
-    if (process.env.CODEX_ACCESS_TOKEN) {
-      warnings.push("The daemon's environment sets CODEX_ACCESS_TOKEN. Codex agents on your CLI login use it instead of a ChatGPT sign-in.");
+      const warning = this.adapters[family].environmentWarning(process.env);
+      if (warning) warnings.push(warning);
     }
     if ((await this.reopener.locate()) === null) {
       warnings.push(
@@ -1657,7 +1675,7 @@ export class Service {
     const info = await agentInfo(paseo, agentId);
     if (!info) throw new Error("That agent is no longer available.");
     const family = (await this.families.resolve(paseo))[info.provider];
-    if (!family) throw new Error(`${info.provider} agents don't use Claude or ChatGPT subscription accounts.`);
+    if (!family) throw new Error(`${info.provider} agents don't use a subscription account ZeroSub manages.`);
     const adapter = this.adapters[family];
     const state = await this.store.read();
     const target = accountId ? findAccount(state, accountId) : defaultAccount(state, family);
@@ -1831,7 +1849,7 @@ export class Service {
       await this.ensureFamily(family);
       availability = this.availability.get(family);
     }
-    if (!availability?.ok) throw new Error(`${PROVIDER_NAME[family]} isn't installed on the daemon machine.`);
+    if (!availability?.ok) throw new Error(`${FAMILY_CLI[family]} isn't installed on the daemon machine.`);
     // One flow per provider at a time (Codex's browser sign-in uses a fixed local port).
     for (const login of this.logins.values()) {
       if (login.family === family && !login.finishedAt) await this.cancelLogin(login.id);

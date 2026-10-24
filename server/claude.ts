@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
-import type { LoginMethod, Usage, UsageWindow } from "../shared/model";
+import { FAMILY_PORTABLE, type LoginMethod, type Usage, type UsageWindow } from "../shared/model";
 import {
   ProgressEmitter,
   spawnEnv,
@@ -54,7 +54,7 @@ const OVERRIDING_AUTH = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANT
 
 export class ClaudeAdapter implements FamilyAdapter {
   readonly family = "claude" as const;
-  readonly portable = true;
+  readonly portable = FAMILY_PORTABLE.claude;
   /** Anthropic's usage endpoint answers 429 to rapid repeats. */
   readonly usageSpacingMs = 90_000;
   private readonly renewing = new Map<string, Promise<Credentials | null>>();
@@ -261,6 +261,12 @@ export class ClaudeAdapter implements FamilyAdapter {
 
   detectLimit = detectClaudeLimit;
   detectSignOut = detectClaudeSignOut;
+
+  environmentWarning(env: NodeJS.ProcessEnv): string | null {
+    return env.CLAUDE_CODE_OAUTH_TOKEN || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY
+      ? "The daemon's environment sets a Claude API key or token. Agents on your CLI login use it; agents on added accounts use their own sign-in."
+      : null;
+  }
 }
 
 class ClaudeLogin extends ProgressEmitter implements LoginHandle {

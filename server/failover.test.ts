@@ -52,6 +52,7 @@ function claudeAdapter(hit: () => LimitHit): FamilyAdapter {
     logout: async () => undefined,
     detectLimit: (event: { outcome: { kind: string } }) => (event.outcome.kind === "failed" ? hit() : null),
     detectSignOut: () => null,
+    environmentWarning: () => null,
   } as unknown as FamilyAdapter;
 }
 
