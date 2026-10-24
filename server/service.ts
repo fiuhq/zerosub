@@ -122,6 +122,7 @@ interface AgentInfo {
   /** The agent this one carries on from, when ZeroSub started it as a continuation. */
   continuedFrom: string | null;
   workspaceId: string | null;
+  model: string | null;
 }
 
 type ReopenOutcome = "reopened" | "deferred" | "closed" | "failed";
@@ -481,6 +482,11 @@ export class Service {
     const endedAt = Date.now();
     const accountId = this.runningOn(await this.store.read(), agentId, family);
     if (accountId) this.activeAt.set(accountId, endedAt);
+    // A turn on a model billed elsewhere says nothing about this account.
+    if (adapter.ownsModel && !adapter.ownsModel((await agentInfo(context.paseo, agentId))?.model ?? null)) {
+      if (this.deferred.has(agentId)) await this.finishDeferred(context.paseo, agentId, family);
+      return;
+    }
     if (event.outcome.kind !== "canceled") {
       const hit = adapter.detectLimit(event);
       if (hit && (!hit.suspected || (accountId !== undefined && (await this.confirmFull(accountId, endedAt))))) {
@@ -1551,6 +1557,10 @@ export class Service {
       }
       const warning = this.adapters[family].environmentWarning(process.env);
       if (warning) warnings.push(warning);
+      if (availability?.ok && accountsOf(await this.store.read(), family).length > 1) {
+        const setup = await this.adapters[family].setupWarning?.().catch(() => null);
+        if (setup) warnings.push(setup);
+      }
     }
     if ((await this.reopener.locate()) === null) {
       warnings.push(
@@ -2072,6 +2082,7 @@ function toAgentInfo(agent: AgentSnapshot): AgentInfo {
     title: agent.title ?? null,
     continuedFrom: agent.labels?.[CONTINUED_FROM_LABEL] ?? null,
     workspaceId: agent.workspaceId ?? null,
+    model: agent.model ?? null,
   };
 }
 

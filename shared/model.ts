@@ -4,7 +4,7 @@ import { z } from "zod";
  * The subscription families this plugin manages, one adapter each. Custom provider profiles map onto
  * one of them. Adding a family means a value here, a row in each table below, and its adapter.
  */
-export const FamilySchema = z.enum(["claude", "codex", "kimi", "copilot"]);
+export const FamilySchema = z.enum(["claude", "codex", "kimi", "copilot", "opencode"]);
 export type Family = z.infer<typeof FamilySchema>;
 export const FAMILIES: readonly Family[] = FamilySchema.options;
 
@@ -14,6 +14,7 @@ export const FAMILY_LABEL: Record<Family, string> = {
   codex: "ChatGPT",
   kimi: "Kimi",
   copilot: "Copilot",
+  opencode: "OpenCode Go",
 };
 
 /** Section headings on the Accounts screen. */
@@ -22,6 +23,7 @@ export const FAMILY_HEADING: Record<Family, string> = {
   codex: "ChatGPT (Codex)",
   kimi: "Kimi Code",
   copilot: "GitHub Copilot",
+  opencode: "OpenCode Go",
 };
 
 /** The CLI that signs in and runs the agents. */
@@ -30,6 +32,7 @@ export const FAMILY_CLI: Record<Family, string> = {
   codex: "Codex",
   kimi: "Kimi Code",
   copilot: "Copilot CLI",
+  opencode: "OpenCode",
 };
 
 /**
@@ -41,6 +44,7 @@ export const FAMILY_PORTABLE: Record<Family, boolean> = {
   codex: false,
   kimi: true,
   copilot: true,
+  opencode: true,
 };
 
 /**
@@ -54,13 +58,14 @@ export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable" | "device"> =
   codex: "switchable",
   kimi: "device",
   copilot: "device",
+  opencode: "paste",
 };
 
 /**
  * Providers a stopped chat can carry on with when every account of its own is out, most preferred
  * first. The first that is installed and has a usable account takes over in a new agent.
  */
-export const FALLBACK_ORDER: readonly Family[] = ["claude", "codex", "kimi", "copilot"];
+export const FALLBACK_ORDER: readonly Family[] = ["claude", "codex", "kimi", "copilot", "opencode"];
 
 /** "Claude, ChatGPT and Kimi": the subscriptions, as a phrase for people. */
 export function familyPhrase(families: readonly Family[] = FALLBACK_ORDER, joiner = "and"): string {
