@@ -122,6 +122,7 @@ interface AgentInfo {
   /** The agent this one carries on from, when ZeroSub started it as a continuation. */
   continuedFrom: string | null;
   workspaceId: string | null;
+  model: string | null;
 }
 
 type ReopenOutcome = "reopened" | "deferred" | "closed" | "failed";
@@ -481,6 +482,11 @@ export class Service {
     const endedAt = Date.now();
     const accountId = this.runningOn(await this.store.read(), agentId, family);
     if (accountId) this.activeAt.set(accountId, endedAt);
+    // A turn on a model billed elsewhere says nothing about this account.
+    if (adapter.ownsModel && !adapter.ownsModel((await agentInfo(context.paseo, agentId))?.model ?? null)) {
+      if (this.deferred.has(agentId)) await this.finishDeferred(context.paseo, agentId, family);
+      return;
+    }
     if (event.outcome.kind !== "canceled") {
       const hit = adapter.detectLimit(event);
       if (hit && (!hit.suspected || (accountId !== undefined && (await this.confirmFull(accountId, endedAt))))) {
@@ -1059,6 +1065,7 @@ export class Service {
       if (this.switching.has(agentId) || !this.switchGuard.allows(agentId, Date.now())) continue;
       const info = await agentInfo(paseo, agentId);
       if (!info || info.archived || info.status !== "idle") continue;
+      if (this.adapters[family].ownsModel?.(info.model) === false) continue;
       if (await this.lastTurnHitLimit(paseo, agentId, family)) continue;
       this.switching.add(agentId);
       try {
@@ -1164,13 +1171,21 @@ export class Service {
       };
     }
 
+    const adapter = this.adapters[other];
+    let model: string | undefined;
+    if (adapter.ownsModel) {
+      const models = (await paseo.providers.listModels(provider)).models ?? [];
+      model = [models.find((entry) => entry.isDefault), ...models].find((entry) => entry && adapter.ownsModel?.(entry.id))?.id;
+      if (!model) return { skipped: `${FAMILY_CLI[other]} has no ${name} model to continue on.` };
+    }
+
     const fork = await continueInNewAgent({
       paseo,
       sourceAgentId: agentId,
       timeline,
       why: source === "auto" ? `every ${FAMILY_LABEL[family]} account reached its usage limit` : `the work was moved to ${name}`,
       previous: FAMILY_CLI[family],
-      target: { provider, label: name, modeId },
+      target: { provider, label: name, modeId, ...(model ? { model } : {}) },
       bind: async (newAgentId) => {
         await this.store.update((draft) => {
           draft.bindings[newAgentId] = {
@@ -1551,6 +1566,10 @@ export class Service {
       }
       const warning = this.adapters[family].environmentWarning(process.env);
       if (warning) warnings.push(warning);
+      if (availability?.ok && accountsOf(await this.store.read(), family).length > 1) {
+        const setup = await this.adapters[family].setupWarning?.().catch(() => null);
+        if (setup) warnings.push(setup);
+      }
     }
     if ((await this.reopener.locate()) === null) {
       warnings.push(
@@ -2072,6 +2091,7 @@ function toAgentInfo(agent: AgentSnapshot): AgentInfo {
     title: agent.title ?? null,
     continuedFrom: agent.labels?.[CONTINUED_FROM_LABEL] ?? null,
     workspaceId: agent.workspaceId ?? null,
+    model: agent.model ?? null,
   };
 }
 

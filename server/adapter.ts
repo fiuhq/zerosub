@@ -111,6 +111,13 @@ export interface FamilyAdapter {
   detectSignOut(event: TurnEvent): string | null;
   /** A note for the user when the daemon's own environment overrides this provider's sign-in, else null. */
   environmentWarning(env: NodeJS.ProcessEnv): string | null;
+  /** A note for the user when the CLI's own setup keeps added accounts from taking effect, else null. */
+  setupWarning?(): Promise<string | null>;
+  /**
+   * For a provider that also runs models billed elsewhere: whether an agent on `model` uses this
+   * account at all. Limits and switch early only follow turns on models it owns. Absent: every model.
+   */
+  ownsModel?(model: string | null): boolean;
 }
 
 /** The environment for a process ZeroSub spawns against `patch`. */

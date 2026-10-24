@@ -8,6 +8,7 @@ import { detectClaudeLimit } from "./limits";
 import type { Reopener } from "./reopen";
 import { everyFamily } from "./test-families";
 import { Service } from "./service";
+import { OpenCodeGoAdapter } from "./opencode";
 import { MAIN_ACCOUNT_ID, StateStore, type StoredAccount, type StoredState } from "./state";
 import { preferences } from "../shared/preferences";
 
@@ -269,14 +270,17 @@ describe("forking to the other provider", () => {
       { id: "auto", label: "Default Permissions", colorTier: "moderate" },
       { id: "full-access", label: "Full Access", colorTier: "dangerous" },
     ],
+    opencode: [{ id: "build", label: "Build", colorTier: "dangerous" }],
   };
 
-  async function setUpFork(modeId: string) {
+  /** `opencodeModels` forks to OpenCode Go, listing those models, instead of to ChatGPT. */
+  async function setUpFork(modeId: string, opencodeModels?: Array<{ id: string; isDefault?: boolean }>) {
+    const other = opencodeModels ? "opencode" : "codex";
     const store = new StateStore(join(root, "state.json"));
     await store.update((draft) =>
       Object.assign(draft, {
-        accounts: [account(MAIN, "marketing", "main"), { ...account(CODEX_MAIN, "hello", "main"), family: "codex" }],
-        defaults: { claude: MAIN, codex: CODEX_MAIN },
+        accounts: [account(MAIN, "marketing", "main"), { ...account(MAIN_ACCOUNT_ID[other], "hello", "main"), family: other }],
+        defaults: { claude: MAIN, [other]: MAIN_ACCOUNT_ID[other] },
       }),
     );
     const source = {
@@ -297,16 +301,21 @@ describe("forking to the other provider", () => {
     const paseo = {
       config: { get: async () => ({ config: { providers: {} } }) },
       providers: {
-        listAvailable: async () => ({ providers: [{ provider: "claude", available: true }, { provider: "codex", available: true }] }),
+        listAvailable: async () => ({ providers: [{ provider: "claude", available: true }, { provider: other, available: true }] }),
         listModes: async (provider: string) => ({ modes: MODES[provider] }),
-        listModels: async (provider: string) => ({ models: [{ id: provider === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", isDefault: true }] }),
+        listModels: async (provider: string) => ({
+          models:
+            provider === "opencode"
+              ? opencodeModels
+              : [{ id: provider === "codex" ? "gpt-5.6-sol" : "claude-opus-5-5", isDefault: true }],
+        }),
       },
       workspaces: {
         ref: () => ({
           agents: {
             create: async (request: (typeof created)[number]) => {
               created.push(request);
-              agents.push({ id: request.agentId, provider: "codex", status: "running", title: request.title, archivedAt: null, labels: request.labels });
+              agents.push({ id: request.agentId, provider: other, status: "running", title: request.title, archivedAt: null, labels: request.labels });
             },
           },
         }),
@@ -324,9 +333,14 @@ describe("forking to the other provider", () => {
       everyFamily(claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), {
         claude: claudeAdapter(() => ({ kind: "window", resetsAt: inFuture(), message: "You've hit your session limit" })),
         codex: { ...claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), family: "codex", portable: false } as FamilyAdapter,
+        opencode: {
+          ...claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })),
+          family: "opencode",
+          ownsModel: (model: string | null) => new OpenCodeGoAdapter().ownsModel(model),
+        } as FamilyAdapter,
       }),
       store,
-      { resolve: async () => ({ claude: "claude" as const, codex: "codex" as const }) } as unknown as FamilyResolver,
+      { resolve: async () => ({ claude: "claude" as const, [other]: other }) } as unknown as FamilyResolver,
       { locate: async () => "/usr/local/bin/paseo", reopen: async () => ({ ok: true as const }) } as unknown as Reopener,
     );
     service.setPreferences(preferences.schema.parse({ forkOtherProvider: true }));
@@ -376,6 +390,22 @@ describe("forking to the other provider", () => {
     expect(created).toHaveLength(0);
     expect(notes.at(-1)).toMatchObject({ outcome: "stayed" });
     expect(notes.at(-1)?.detail).toMatch(/no mode as careful as this agent's \(“Always Ask”\)/);
+  });
+
+  it("starts an OpenCode Go fork on a Go model even when OpenCode's default is another provider's", async () => {
+    const { created, limitTurn } = await setUpFork("bypassPermissions", [
+      { id: "anthropic/claude-sonnet-5-5", isDefault: true },
+      { id: "opencode-go/glm-5.3" },
+    ]);
+    await limitTurn();
+    expect(created.map((request) => request.config)).toEqual([{ provider: "opencode/opencode-go/glm-5.3", modeId: "build" }]);
+  });
+
+  it("won't fork to OpenCode Go when OpenCode lists no Go model", async () => {
+    const { created, notes, limitTurn } = await setUpFork("bypassPermissions", [{ id: "anthropic/claude-sonnet-5-5", isDefault: true }]);
+    await limitTurn();
+    expect(created).toHaveLength(0);
+    expect(notes.at(-1)).toMatchObject({ outcome: "stayed", detail: "OpenCode has no OpenCode Go model to continue on." });
   });
 });
 

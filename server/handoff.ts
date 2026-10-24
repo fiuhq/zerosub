@@ -150,6 +150,8 @@ export interface ContinuationTarget {
   label: string;
   /** A mode no more permissive than the source agent's. */
   modeId: string;
+  /** The model to start on, instead of the provider's default. */
+  model?: string;
 }
 
 /**
@@ -187,7 +189,7 @@ export async function continueInNewAgent(options: {
   const { target } = options;
   const provider = target?.provider ?? source.provider;
   const model = target
-    ? await defaultModel(paseo, provider)
+    ? (target.model ?? (await defaultModel(paseo, provider)))
     : (source.model ?? source.runtimeInfo?.model ?? (await defaultModel(paseo, provider)));
   if (!model) throw new Error(`Couldn't tell which ${provider} model to use for the new agent.`);
 
