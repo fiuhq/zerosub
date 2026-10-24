@@ -530,7 +530,6 @@ export class Service {
         draft.bindings[agentId] = { accountId: next.id, source: "auto", at: new Date(now).toISOString() };
       });
       this.switchGuard.note(agentId, now);
-      const outcome = await this.reopenAgent(paseo, agentId, null, true);
       const row: SwitchRow = {
         family,
         from: account.label,
@@ -540,11 +539,12 @@ export class Service {
         continued: false,
         continuedIn: null,
         toFamily: null,
-        outcome: outcome === "reopened" ? "switched" : "pending",
+        outcome: "switched",
         detail: `at ${Math.round(full.usedPercent)}% of its ${full.label} limit`,
         at: new Date(now).toISOString(),
       };
-      await this.appendRow(paseo, agentId, await this.landed(row, agentId));
+      const outcome = await this.reopenAgent(paseo, agentId, row, true);
+      if (outcome === "reopened") await this.appendRow(paseo, agentId, await this.landed(row, agentId));
     } finally {
       this.switching.delete(agentId);
     }

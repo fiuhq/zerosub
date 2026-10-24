@@ -83,7 +83,8 @@ export function isLongWindow(window: UsageWindow): boolean {
 }
 
 function lineFor(window: UsageWindow, lines: EarlyLines): number {
-  return isLongWindow(window) ? lines.long : lines.short;
+  const line = isLongWindow(window) ? lines.long : lines.short;
+  return line >= 100 ? Infinity : line;
 }
 
 /** A live, error-free reading taken recently enough to move an agent on. */

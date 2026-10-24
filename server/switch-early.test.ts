@@ -52,6 +52,8 @@ describe("nearlyFull", () => {
 
   it("is off for a kind of window whose line is 100", () => {
     expect(nearlyFull(reading(99, 99), { short: 100, long: 100 }, NOW)).toEqual([]);
+    expect(nearlyFull(reading(100, 100), { short: 100, long: 100 }, NOW)).toEqual([]);
+    expect(nearlyFull(reading(100, 95), { short: 100, long: 95 }, NOW).map((w) => w.id)).toEqual(["seven_day"]);
   });
 });
 
@@ -60,6 +62,11 @@ describe("hasRoom", () => {
     expect(hasRoom(reading(69, 84), LINES, NOW)).toBe(true);
     expect(hasRoom(reading(70, 10), LINES, NOW)).toBe(false);
     expect(hasRoom(reading(10, 85), LINES, NOW)).toBe(false);
+  });
+
+  it("ignores a kind of window whose line is 100 when picking where to move", () => {
+    expect(hasRoom(reading(95, 10), { short: 100, long: 95 }, NOW)).toBe(true);
+    expect(hasRoom(reading(100, 10), { short: 100, long: 95 }, NOW)).toBe(true);
   });
 
   it("counts an unknown or stale reading as no room", () => {
