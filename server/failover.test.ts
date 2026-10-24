@@ -6,6 +6,7 @@ import type { AgentTimelineItem, FamilyAdapter, LimitHit, UsageRead } from "./ad
 import type { FamilyResolver } from "./families";
 import { detectClaudeLimit } from "./limits";
 import type { Reopener } from "./reopen";
+import { everyFamily } from "./test-families";
 import { Service } from "./service";
 import { MAIN_ACCOUNT_ID, StateStore, type StoredAccount, type StoredState } from "./state";
 import { preferences } from "../shared/preferences";
@@ -110,7 +111,7 @@ async function setUp(state: Partial<StoredState>, hit: () => LimitHit, options: 
   const families = { resolve: async () => ({ claude: "claude" as const }) };
   const claude = { ...claudeAdapter(hit), ...(options.detectLimit ? { detectLimit: options.detectLimit } : {}) };
   const service = new Service(
-    { claude, codex: claudeAdapter(hit), kimi: claudeAdapter(hit) },
+    everyFamily(claudeAdapter(hit), { claude }),
     store,
     families as unknown as FamilyResolver,
     reopener as unknown as Reopener,
@@ -320,11 +321,10 @@ describe("forking to the other provider", () => {
       },
     };
     const service = new Service(
-      {
+      everyFamily(claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), {
         claude: claudeAdapter(() => ({ kind: "window", resetsAt: inFuture(), message: "You've hit your session limit" })),
         codex: { ...claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), family: "codex", portable: false } as FamilyAdapter,
-        kimi: { ...claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), family: "kimi" } as FamilyAdapter,
-      },
+      }),
       store,
       { resolve: async () => ({ claude: "claude" as const, codex: "codex" as const }) } as unknown as FamilyResolver,
       { locate: async () => "/usr/local/bin/paseo", reopen: async () => ({ ok: true as const }) } as unknown as Reopener,
@@ -489,11 +489,10 @@ describe("changing the default account", () => {
     const reopened: string[] = [];
     const hit = (): LimitHit => ({ kind: "window", resetsAt: inFuture(), message: "You've hit your session limit" });
     const service: Service = new Service(
-      {
+      everyFamily(claudeAdapter(hit), {
         claude: { ...claudeAdapter(hit), ...options.claude },
         codex: { ...claudeAdapter(hit), family: "codex", portable: false } as FamilyAdapter,
-        kimi: claudeAdapter(hit),
-      },
+      }),
       store,
       { resolve: async () => ({ claude: "claude" as const, codex: "codex" as const }) } as unknown as FamilyResolver,
       {

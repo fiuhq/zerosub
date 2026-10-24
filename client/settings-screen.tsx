@@ -8,6 +8,7 @@ import {
 } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
 import { Text } from "react-native";
+import { FALLBACK_ORDER, familyPhrase } from "../shared/model";
 import { DEFAULT_CONTINUE_PROMPT, preferences, type Preferences } from "../shared/preferences";
 
 /** Settings → Plugins → zerosub. Accounts themselves live in the sidebar surface. */
@@ -131,8 +132,8 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
             onValueChange={(autoRedeem) => save({ autoRedeem })}
           />
           <SettingsSwitch
-            label="When every account is out, fork the chat to the other provider"
-            hint="A stopped Claude chat carries on in a new ChatGPT agent, or the other way round, with the conversation so far and no more permissions than the original. The original stays as it was."
+            label="When every account is out, fork the chat to another provider"
+            hint={`A stopped chat carries on in a new agent on the next provider you have an account for (${familyPhrase(FALLBACK_ORDER, "then")}), with the conversation so far and no more permissions than the original. The original stays as it was.`}
             value={settings.values.forkOtherProvider}
             disabled={settings.saving || !settings.values.autoSwitch}
             onValueChange={(forkOtherProvider) => save({ forkOtherProvider })}

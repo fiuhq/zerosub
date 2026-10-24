@@ -1,5 +1,5 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { FAMILY_LABEL, type AccountView, type StateView } from "../shared/model";
+import { FAMILY_LABEL, familyPhrase, type AccountView, type StateView } from "../shared/model";
 import { setAgentAccount, setDefaultAccount } from "../shared/rpc";
 import type { ZeroSubStore } from "./store";
 
@@ -29,7 +29,7 @@ export function contributeCommands(client: PluginClientContext, store: ZeroSubSt
       async onSubmit({ args, agent, openSurface }) {
         const state = await currentState(store);
         const family = state.providers[agent.provider];
-        if (!family) throw new Error(`${agent.provider} agents don't use Claude or ChatGPT subscription accounts.`);
+        if (!family) throw new Error(`${agent.provider} agents don't use a ${familyPhrase(undefined, "or")} subscription account.`);
         const query = args.trim();
         if (!query) {
           openSurface("accounts");

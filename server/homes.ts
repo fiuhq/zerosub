@@ -1,7 +1,7 @@
 import { copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, rmdir, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join, sep } from "node:path";
-import { homesDir, mainClaudeDir, mainClaudeGlobalConfig, mainCodexHome, mainKimiHome } from "./paths";
+import { homesDir, mainClaudeDir, mainClaudeGlobalConfig, mainCodexHome, mainCopilotHome, mainKimiHome } from "./paths";
 
 /**
  * A managed account home is a real directory holding that account's own credentials and account
@@ -389,5 +389,24 @@ export async function prepareKimiHome(home: string, force = false): Promise<void
   if (!(await exists(join(home, "config.toml"))) && (await exists(join(main, "config.toml")))) {
     await copyFile(join(main, "config.toml"), join(home, "config.toml")).catch(() => undefined);
   }
+  lastSync.set(home, Date.now());
+}
+
+// --------------------------------------------------------------------------- Copilot
+
+/**
+ * Per-account entries in a Copilot CLI home: `config.json` names the signed-in GitHub user, and the
+ * SQLite session index (with its WAL files) stays with its home. Session events in `session-state`,
+ * settings, plugins, MCP config and skills are shared. The sign-in itself lives in the system
+ * credential store under the user's name.
+ */
+function copilotPrivate(name: string): boolean {
+  return name === "config.json" || name.startsWith("session-store.db") || name === "logs" || isTemporary(name) || name.endsWith(".lock");
+}
+
+export async function prepareCopilotHome(home: string, force = false): Promise<void> {
+  const last = lastSync.get(home);
+  if (!force && last && Date.now() - last < SYNC_TTL_MS) return;
+  await syncOverlay(home, { main: mainCopilotHome(), shareDirs: ["session-state"], isPrivate: copilotPrivate });
   lastSync.set(home, Date.now());
 }

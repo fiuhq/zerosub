@@ -37,6 +37,12 @@ export function mainKimiHome(): string {
   return configured ? resolve(configured) : join(homedir(), ".kimi-code");
 }
 
+/** Copilot CLI's home when `COPILOT_HOME` is not set. */
+export function mainCopilotHome(): string {
+  const configured = process.env.COPILOT_HOME?.trim();
+  return configured ? resolve(configured) : join(homedir(), ".copilot");
+}
+
 export function mainCodexHome(): string {
   const configured = process.env.CODEX_HOME?.trim();
   return configured ? resolve(configured) : join(homedir(), ".codex");
