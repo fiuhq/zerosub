@@ -162,7 +162,13 @@ export class CopilotAdapter implements FamilyAdapter {
   async usage(home: string | null): Promise<UsageRead> {
     const fetchedAt = new Date().toISOString();
     const user = await copilotUser(home ?? mainCopilotHome());
-    if (!user) return { fetchedAt, windows: [], error: "Usage shows once this account is signed in.", cached: false, resets: null };
+    if (!user) {
+      const fromEnv = !home && TOKEN_KEYS.some((key) => process.env[key]);
+      const error = fromEnv
+        ? "This login uses a token from the daemon's environment, so Copilot's usage isn't known for it."
+        : "Usage shows once this account is signed in.";
+      return { fetchedAt, windows: [], error, cached: false, resets: null };
+    }
     const cached = await this.cachedUsage(user.login);
     if (!cached) return { fetchedAt, windows: [], error: "Usage shows after this account is next used.", cached: false, resets: null };
     return { fetchedAt: cached.fetchedAt, windows: cached.windows, error: null, cached: true, resets: null };

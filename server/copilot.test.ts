@@ -14,7 +14,13 @@ vi.mock("./process", async (importOriginal) => {
 });
 
 let root: string;
-const saved = { COPILOT_HOME: process.env.COPILOT_HOME, PASEO_HOME: process.env.PASEO_HOME, GH_TOKEN: process.env.GH_TOKEN };
+const saved = {
+  COPILOT_HOME: process.env.COPILOT_HOME,
+  PASEO_HOME: process.env.PASEO_HOME,
+  COPILOT_GITHUB_TOKEN: process.env.COPILOT_GITHUB_TOKEN,
+  GH_TOKEN: process.env.GH_TOKEN,
+  GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+};
 
 beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "zerosub-copilot-")));
@@ -139,6 +145,19 @@ describe("Copilot usage", () => {
   it("has nothing for a user it never cached, or a broken file", () => {
     expect(parseCopilotCache(cache([]), "octo-user")).toBeNull();
     expect(parseCopilotCache("not json", "octo-user")).toBeNull();
+  });
+
+  it("says why a login with no signed-in user has no usage", async () => {
+    process.env.COPILOT_HOME = join(root, "main");
+    for (const key of ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) delete process.env[key];
+    const adapter = new CopilotAdapter();
+    expect((await adapter.usage(null)).error).toBe("Usage shows once this account is signed in.");
+    process.env.GH_TOKEN = "from-daemon";
+    expect((await adapter.usage(null)).error).toBe(
+      "This login uses a token from the daemon's environment, so Copilot's usage isn't known for it.",
+    );
+    // An added account never inherits the daemon's token, so it still waits for its own sign-in.
+    expect((await adapter.usage(join(root, "copilot-a"))).error).toBe("Usage shows once this account is signed in.");
   });
 
   it("looks for the cache where each platform keeps it", () => {
