@@ -39,20 +39,20 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - In a browser on the host's own computer, the page finishes by itself.
    - Anywhere else, choose **Use a code instead**. For Claude, paste the code shown after sign-in. For ChatGPT, type the code shown in Paseo on the page. Phones, and hosts without a desktop (servers, containers, daemons started over SSH), start with the code.
 3. Choose which account agents use:
-   - **Make default**: agents that follow the default use it. New agents start at the top of Up next while **Spread new agents across accounts** is on (the default), and on the default when it's off. Open Claude agents switch right away, busy ones after their turn.
+   - **Make default** (in a card's ⋯ menu): agents that follow the default use it. New agents start at the top of Up next while **Spread new agents across accounts** is on (the default), and on the default when it's off. Open Claude agents switch right away, busy ones after their turn.
      - To leave open agents where they are, turn off **Move open agents when the default changes** (in Accounts, or **Settings → Plugins → zerosub → ZeroSub preferences**). Each open agent that follows the default then stays pinned to the account it's using, even after it reopens, unless that account is signed out, disabled or at its limit. Agents that aren't open at the time, and new agents when **Spread new agents across accounts** is off, use the new default.
      - A kept agent still switches when its account hits a limit. To move it to the new default, choose **Follow default** from its account button, or type `/account default`.
    - **The account button in an agent's message box**: moves that one agent.
    - **`/account work`** in the message box, or `/account default` to follow the default again.
    - **⌘K → "Make … the default"**.
-   - **Disable for now** (the pause button on a card): the account stays signed in but ZeroSub stops using it. Its agents move to your other accounts right away (busy ones after their turn) and come back when you press **Enable**. ChatGPT conversations already on it stay, since they can't change accounts. You can't disable the last usable account of a provider.
+   - **Disable for now** (in a card's ⋯ menu): the account stays signed in but ZeroSub stops using it. Its agents move to your other accounts right away (busy ones after their turn) and come back when you choose **Enable account**. ChatGPT conversations already on it stay, since they can't change accounts. You can't disable the last usable account of a provider.
 4. Leave **Automatic switching** on (in Accounts, or **Settings → Plugins → zerosub → ZeroSub preferences**) and limits take care of themselves:
    - Only the CLIs' own limit notices trigger a switch. That covers Claude Code's "You've hit your session limit · resets 3pm" and Codex's "You’ve hit your usage limit…".
    - Paseo 0.13 and later no longer send the finished turn to plugins, so ZeroSub reads that turn from the agent's timeline instead.
    - A short note in the agent's timeline says what happened.
    - As a safety stop, one agent changes accounts at most 4 times in 10 minutes. If it hits that, its timeline says so; pick an account from its account button to carry on.
-   - An exhausted account is skipped until it resets. If you know it has room again sooner, for example after upgrading or buying credits, press **Mark as available again** (the check mark) on its card.
-5. **Accounts per project**: press **Projects** (the folder button) on an account's card and pick the Paseo projects whose agents should use it.
+   - An exhausted account is skipped until it resets. If you know it has room again sooner, for example after upgrading or buying credits, choose **Mark as available again** from its card's ⋯ menu.
+5. **Accounts per project**: choose **Projects** from an account card's ⋯ menu and pick the Paseo projects whose agents should use it.
    - It follows Paseo's own projects, so every workspace and worktree of a project counts, wherever its folder lives.
    - A project has one account per provider. Picking a project that already uses another account moves it here.
    - The project's account comes before the default and before spreading new agents. An account you chose for an agent comes first, and so does the account a limit or switch early moved it to, until that one runs out too.
