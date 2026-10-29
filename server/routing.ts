@@ -1,5 +1,5 @@
-import { peakUsage } from "../shared/format";
 import type { Family, Usage, UsageWindow } from "../shared/model";
+import { compareUpNext, isLongWindow, upNextRank } from "../shared/up-next";
 import {
   accountsOf,
   defaultAccount,
@@ -20,31 +20,28 @@ export function isUsable(account: StoredAccount, now: number): boolean {
   return account.signedIn && !account.disabled && !isLimited(account, now);
 }
 
-/** Lower is better. Unknown usage ranks in the middle so a known-quiet account wins over a mystery. */
-export function headroomScore(usage: Usage | null | undefined): number {
-  const peak = usage ? peakUsage(usage.windows) : null;
-  return peak ? peak.usedPercent : 50;
-}
-
-/** The usable account with the most room, preferring the default, then the CLI login, on ties. */
+/** The usable account first in Up next, preferring the default, then the CLI login, on ties. */
 export function mostAvailable(
   state: StoredState,
   family: Family,
   usageOf: (accountId: string) => Usage | null | undefined,
   now: number,
   exclude: ReadonlySet<string> = new Set(),
+  lines: EarlyLines | null = null,
 ): StoredAccount | undefined {
   const preferred = defaultAccount(state, family)?.id;
   const candidates = accountsOf(state, family).filter(
     (account) => !exclude.has(account.id) && isUsable(account, now),
   );
+  const ranks = new Map(candidates.map((account) => [account.id, upNextRank(usageOf(account.id), now, lines ?? undefined)]));
   const rank = (account: StoredAccount) => [
-    headroomScore(usageOf(account.id)),
     account.id === preferred ? 0 : 1,
     account.kind === "main" ? 0 : 1,
     Date.parse(account.createdAt) || 0,
   ];
   candidates.sort((a, b) => {
+    const order = compareUpNext(ranks.get(a.id)!, ranks.get(b.id)!);
+    if (order !== 0) return order;
     const left = rank(a);
     const right = rank(b);
     for (let index = 0; index < left.length; index += 1) {
@@ -77,10 +74,6 @@ export const EARLY_MARGIN = 10;
 export const EARLY_READING_MS = 10 * 60_000;
 /** A full window that refills this soon isn't worth leaving: the account is about to have room. */
 export const EARLY_RESET_MS = 10 * 60_000;
-
-export function isLongWindow(window: UsageWindow): boolean {
-  return /week|seven|month|day/i.test(`${window.id} ${window.label}`);
-}
 
 function lineFor(window: UsageWindow, lines: EarlyLines): number {
   const line = isLongWindow(window) ? lines.long : lines.short;
@@ -120,7 +113,7 @@ export function roomyAccount(
   exclude: ReadonlySet<string>,
 ): StoredAccount | undefined {
   const cramped = accountsOf(state, family).filter((account) => !hasRoom(usageOf(account.id), lines, now));
-  return mostAvailable(state, family, usageOf, now, new Set([...exclude, ...cramped.map((account) => account.id)]));
+  return mostAvailable(state, family, usageOf, now, new Set([...exclude, ...cramped.map((account) => account.id)]), lines);
 }
 
 /** The account `projectId` uses for this family, if one is set. */
@@ -195,7 +188,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     if (!input.portable && bound?.id !== dedicated.id) bind = { accountId: dedicated.id, source: "thread", at };
   }
   if (!account && fresh && input.balanceNewAgents && accounts.length > 1) {
-    account = mostAvailable(state, input.family, input.usageOf, input.now, reserved);
+    account = mostAvailable(state, input.family, input.usageOf, input.now, reserved, input.early);
     if (account) bind = { accountId: account.id, source: "balance", at };
   }
   if (!account) {
@@ -207,7 +200,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     if (account && !imported && reserved.has(account.id)) {
       const running = findAccount(state, state.sessions[input.agentId]?.accountId);
       const stays = running && running.family === input.family && isUsable(running, input.now) && !reserved.has(running.id);
-      account = (stays ? running : mostAvailable(state, input.family, input.usageOf, input.now, reserved)) ?? account;
+      account = (stays ? running : mostAvailable(state, input.family, input.usageOf, input.now, reserved, input.early)) ?? account;
     }
     // A thread that can't move is pinned to the account it first opened on.
     if (account && !input.portable) bind = { accountId: account.id, source: "thread", at };
@@ -218,7 +211,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   const why = !account.signedIn ? "signed_out" : account.disabled ? "disabled" : isLimited(account, input.now) ? "limited" : null;
   const mayMove = fresh || input.portable;
   if (why && mayMove && (input.autoSwitch || why !== "limited")) {
-    const alternative = mostAvailable(state, input.family, input.usageOf, input.now, new Set([...reserved, account.id]));
+    const alternative = mostAvailable(state, input.family, input.usageOf, input.now, new Set([...reserved, account.id]), input.early);
     if (alternative) {
       skipped = { account, why };
       account = alternative;

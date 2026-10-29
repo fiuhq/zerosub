@@ -775,7 +775,7 @@ export class Service {
       }
       return;
     }
-    const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([...this.reserved(latest, agentId), account.id]));
+    const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([...this.reserved(latest, agentId), account.id]), this.early);
     if (!next) {
       if (problem.kind === "limit" && problem.hit.kind === "window" && this.prefs.autoRedeem && !account.disabled) {
         // Opt-in: every account is out, so spend a banked reset rather than stop.
@@ -840,7 +840,7 @@ export class Service {
         detail = result.skipped;
       } else {
         const elsewhere = fallbackFamilies(family).find((other) =>
-          mostAvailable(latest, other, (id) => this.usage.get(id), now, this.reserved(latest, agentId)),
+          mostAvailable(latest, other, (id) => this.usage.get(id), now, this.reserved(latest, agentId), this.early),
         );
         if (elsewhere) detail = `Or continue on ${FAMILY_LABEL[elsewhere]} in a new agent from the account button.`;
       }
@@ -1109,7 +1109,7 @@ export class Service {
         const now = Date.now();
         const latest = await this.store.read();
         if (this.runningOn(latest, agentId, family) !== accountId) continue;
-        const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([...this.reserved(latest, agentId), accountId]));
+        const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([...this.reserved(latest, agentId), accountId]), this.early);
         if (!next) return;
         await this.store.update((draft) => {
           draft.bindings[agentId] = { accountId: next.id, source: "auto", at: new Date(now).toISOString() };
@@ -1191,7 +1191,7 @@ export class Service {
       ? (await paseo.providers.listAvailable()).providers?.some((entry) => entry.provider === provider && entry.available)
       : false;
     if (!provider || !available) return { skipped: `${name} isn't available in Paseo on this host.` };
-    const account = mostAvailable(state, other, (id) => this.usage.get(id), Date.now(), this.reserved(state, agentId));
+    const account = mostAvailable(state, other, (id) => this.usage.get(id), Date.now(), this.reserved(state, agentId), this.early);
     if (!account) return { skipped: `Every ${name} account is at its limit too.` };
 
     const original = (await paseo.agents.ref(agentId).refresh())?.agent;

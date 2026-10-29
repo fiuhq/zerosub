@@ -21,6 +21,7 @@ import { AddAccountModal } from "./add-account";
 import { ResetConfirm, redeemToast, resetBadge } from "./reset-confirm";
 import { describe, useStore, VISIBLE_POLL_MS, type ZeroSubStore } from "./store";
 import { Badge, Button, Card, IconButton, UsageBar, useText } from "./ui";
+import { UpNext, useUpNextLines } from "./up-next";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -76,8 +77,8 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
             ) : null}
           </View>
           <Text style={text.muted}>
-            Keep several {familyPhrase()} accounts signed in. Each agent uses one; when an account
-            hits its limit, agents move to another and keep going.
+            Keep several {familyPhrase()} accounts signed in. Each agent uses one; before an account
+            hits its limit, agents move to the one whose spare quota runs out soonest and keep going.
           </Text>
         </View>
 
@@ -211,6 +212,7 @@ function FamilySection({
       {accounts.length === 0 ? (
         <Text style={text.muted}>No {FAMILY_LABEL[family]} accounts yet.</Text>
       ) : null}
+      <UpNext theme={theme} accounts={accounts} />
       {chunk(accounts, compact ? 1 : 2).map((row) => (
         <View key={row.map((account) => account.id).join()} style={{ flexDirection: "row", gap: 10 }}>
           {row.map((account) => (
@@ -725,6 +727,7 @@ function Avatar({ theme, label }: { theme: Theme; label: string }) {
 function AutomationSettings({ theme }: { theme: Theme }) {
   const settings = useSettings(preferences);
   const text = useText(theme);
+  const lines = useUpNextLines();
   if (settings.status === "loading") return null;
   if (settings.status !== "ready") {
     return <Text style={text.danger}>Preferences unavailable: {settings.error}</Text>;
@@ -739,7 +742,11 @@ function AutomationSettings({ theme }: { theme: Theme }) {
       <SettingsCard>
         <SettingsSwitch
           label="Switch accounts when one hits its limit"
-          hint="Agents move to the account with the most room left."
+          hint={
+            lines
+              ? `Agents move early, once an account reaches ${lines.short}% of its 5-hour or ${lines.long}% of its weekly limit, to the top of Up next. Change the lines in ZeroSub's settings.`
+              : "Agents move at the limit to the top of Up next."
+          }
           value={settings.values.autoSwitch}
           disabled={settings.saving}
           onValueChange={(autoSwitch) => save({ autoSwitch })}

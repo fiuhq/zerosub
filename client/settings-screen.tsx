@@ -58,7 +58,7 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
         <SettingsCard>
           <SettingsSwitch
             label="Switch accounts when one hits its limit"
-            hint="The agent moves to the account with the most room left."
+            hint="The agent moves to the top of Up next: the account whose spare quota resets soonest."
             value={settings.values.autoSwitch}
             disabled={settings.saving}
             onValueChange={(autoSwitch) => save({ autoSwitch })}
