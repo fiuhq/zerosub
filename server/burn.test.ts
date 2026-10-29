@@ -49,6 +49,19 @@ describe("BurnTracker", () => {
     expect(quick.project("a", next, 30 * MIN, T0 + MIN)?.windows[0]?.usedPercent).toBe(60);
   });
 
+  it("measures the climb between live readings only, not up to a newer cached one", () => {
+    const burn = new BurnTracker();
+    burn.note("a", reading(T0, 10, 40));
+    burn.note("a", reading(T0 + 5 * MIN, 20, 40));
+    // Live pace is 2 a minute; a cached 60 must not be divided by the 5 live minutes.
+    const cached = reading(T0 + 10 * MIN, 60, 40, RESET_5H, { cached: true });
+    burn.note("a", cached);
+    expect(burn.project("a", cached, 5 * MIN, T0 + 10 * MIN)?.windows[0]?.usedPercent).toBe(70);
+    // Once the live readings are older than the span, there's no telling the pace.
+    const later = reading(T0 + 45 * MIN, 60, 40, RESET_5H, { cached: true });
+    expect(burn.project("a", later, 5 * MIN, T0 + 45 * MIN)?.windows[0]?.usedPercent).toBe(60);
+  });
+
   it("leaves a window that resets within the horizon as it is", () => {
     const burn = new BurnTracker();
     const soon = new Date(T0 + 20 * MIN).toISOString();

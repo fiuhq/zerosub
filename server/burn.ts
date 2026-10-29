@@ -32,15 +32,16 @@ export class BurnTracker {
   }
 
   /** Percent per minute a window has been climbing, or 0 when there's no telling. */
-  climb(accountId: string, window: UsageWindow): number {
-    const samples = this.samples.get(accountId) ?? [];
-    const latest = samples.at(-1);
-    if (!latest) return 0;
-    // The oldest reading of the same window period: a reset in between starts a new climb.
-    const first = samples.find((sample) => sample.windows.some((other) => samePeriod(other, window)));
-    const from = first?.windows.find((other) => samePeriod(other, window));
-    if (!first || !from || latest.at - first.at < MIN_SPAN_MS) return 0;
-    return Math.max(0, (window.usedPercent - from.usedPercent) / ((latest.at - first.at) / 60_000));
+  climb(accountId: string, window: UsageWindow, now: number): number {
+    // Recent live readings of the same window period: a reset in between starts a new climb.
+    const readings = (this.samples.get(accountId) ?? []).flatMap((sample) => {
+      const same = now - sample.at <= BURN_SPAN_MS ? sample.windows.find((other) => samePeriod(other, window)) : undefined;
+      return same ? [{ at: sample.at, usedPercent: same.usedPercent }] : [];
+    });
+    const first = readings[0];
+    const latest = readings.at(-1);
+    if (!first || !latest || latest.at - first.at < MIN_SPAN_MS) return 0;
+    return Math.max(0, (latest.usedPercent - first.usedPercent) / ((latest.at - first.at) / 60_000));
   }
 
   /**
@@ -54,7 +55,7 @@ export class BurnTracker {
       windows: usage.windows.map((window) => {
         const resets = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
         if (Number.isFinite(resets) && resets <= now + horizonMs) return window;
-        const ahead = this.climb(accountId, window) * (horizonMs / 60_000);
+        const ahead = this.climb(accountId, window, now) * (horizonMs / 60_000);
         return ahead > 0 ? { ...window, usedPercent: Math.min(100, window.usedPercent + ahead) } : window;
       }),
     };
