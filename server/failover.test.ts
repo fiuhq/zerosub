@@ -919,3 +919,46 @@ describe("changing the default account", () => {
     expect(reopened).toEqual([]);
   });
 });
+
+describe("a reading past its reset", () => {
+  it("renews the sign-in, so an idle account that sat full is read again once it resets", async () => {
+    const NOW = Date.parse("2026-10-24T12:00:00Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(NOW);
+      const store = new StateStore(join(root, "state.json"));
+      await store.update((draft) => Object.assign(draft, { accounts: [account(MAIN, "main", "main")], defaults: { claude: MAIN, codex: null } }));
+      const windows = (weekly: number) => [{ id: "seven_day", label: "Weekly", usedPercent: weekly, resetsAt: new Date(NOW + 72 * 3_600_000).toISOString() }];
+      // Like Claude with an expired sign-in: nothing is read unless the CLI renews it first.
+      const renewals: boolean[] = [];
+      let signedIn = true;
+      const usage = async (_home: string | null, options: { renewLogin?: boolean } = {}): Promise<UsageRead> => {
+        renewals.push(Boolean(options.renewLogin));
+        const fetchedAt = new Date().toISOString();
+        if (!signedIn && !options.renewLogin) return { fetchedAt, windows: [], error: "Usage shows up after this account is next used.", cached: false, resets: null };
+        return { fetchedAt, windows: windows(signedIn ? 100 : 0), error: null, cached: false, resets: null };
+      };
+      const claude = { ...claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), usage };
+      const service = new Service(
+        { claude, codex: { ...claude, family: "codex", portable: false } as FamilyAdapter },
+        store,
+        { resolve: async () => ({ claude: "claude" as const }) } as unknown as FamilyResolver,
+        { locate: async () => "/usr/local/bin/paseo" } as unknown as Reopener,
+      );
+      service.setPreferences(preferences.schema.parse({}));
+      await service.refreshUsage(MAIN, true);
+      signedIn = false;
+      vi.setSystemTime(NOW + 3_600_000);
+      await service.refreshUsage(MAIN, true);
+      vi.setSystemTime(NOW + 73 * 3_600_000);
+      await service.refreshUsage(MAIN, true);
+      expect(renewals).toEqual([false, false, true]);
+      // The renewed reading replaces the stale one, so the card and Up next see the reset.
+      const shown = (await service.view(fakePaseo().paseo as never)).accounts.find((entry) => entry.id === MAIN)?.usage;
+      expect(shown?.error).toBeNull();
+      expect(shown?.windows.map((window) => window.usedPercent)).toEqual([0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
