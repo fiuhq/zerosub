@@ -5,7 +5,7 @@ Use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot and OpenCode Go s
 - **Add accounts in the app.** Click **Add account** under Claude, ChatGPT, Kimi Code, Copilot or OpenCode Go and sign in on any device, including your phone. You don't need a terminal, environment variables or config files.
 - **Your existing CLI logins show up automatically.** Nothing changes until you add a second account.
 - **Pick an account per agent.** An account button in the message box shows which account each Claude or Codex agent uses. Tap it to switch.
-- **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the account whose spare quota resets soonest and carries on. New agents skip exhausted accounts.
+- **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the top of **Up next**, the list on the Accounts screen that puts the account whose spare quota resets soonest first, and carries on. New agents skip exhausted accounts.
 - **Accounts per project.** Pick the Paseo projects whose agents use an account (work projects on the work account, say). Agents in other projects stay off it.
 - **Switch early.** An agent whose turn ends on a nearly full account moves to one with room before its next turn, so it doesn't stop halfway through a task. New agents skip nearly full accounts too.
 - **Live usage.** Each account shows its own 5-hour and weekly usage and when they reset. Accounts in use refresh about every minute and after each turn, and a limit shows up the moment it hits.
