@@ -1,7 +1,7 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Modal, Pressable, Text, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Modal, Platform, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { formatPercent, formatResetIn } from "../shared/format";
 import type { UsageWindow } from "../shared/model";
 
@@ -257,15 +257,29 @@ export function ActionsMenu({
 }) {
   const [anchor, setAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const button = useRef<View>(null);
+  const picked = useRef<MenuAction | null>(null);
   const screen = useWindowDimensions();
   const colors = theme.colors;
   const close = () => setAnchor(null);
+  const runPicked = () => {
+    const action = picked.current;
+    picked.current = null;
+    action?.onPress();
+  };
   const openMenu = () =>
     button.current?.measureInWindow((x, y, width, height) => setAnchor({ x, y, width, height }));
   return (
     <View ref={button} collapsable={false}>
       <IconButton theme={theme} icon="Ellipsis" label={label} busy={busy} onPress={anchor ? close : openMenu} />
-      <Modal transparent animationType="none" visible={anchor !== null} onRequestClose={close}>
+      <Modal
+        transparent
+        statusBarTranslucent
+        navigationBarTranslucent
+        animationType="none"
+        visible={anchor !== null}
+        onRequestClose={close}
+        onDismiss={runPicked}
+      >
         <Pressable
           accessibilityLabel={`Close ${label}`}
           onPress={close}
@@ -305,8 +319,9 @@ export function ActionsMenu({
                   accessibilityLabel={action.label}
                   accessibilityHint={action.hint}
                   onPress={() => {
+                    picked.current = action;
                     close();
-                    action.onPress();
+                    if (Platform.OS !== "ios") runPicked();
                   }}
                   style={(state) => ({
                     flexDirection: "row",
