@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Usage, UsageWindow } from "../shared/model";
 import type { FamilyAdapter, UsageRead } from "./adapter";
 import type { FamilyResolver } from "./families";
@@ -152,6 +152,8 @@ afterEach(async () => {
 
 /** A Claude adapter whose usage reading for each account comes from `levels`, read when asked. */
 function adapter(levels: Record<string, [fiveHour: number, weekly: number]>, reads: string[]): FamilyAdapter {
+  // A window's reset time stays put while it fills, as a provider reports it.
+  const periodStart = Date.now();
   return {
     family: "claude",
     portable: true,
@@ -164,7 +166,7 @@ function adapter(levels: Record<string, [fiveHour: number, weekly: number]>, rea
       const id = home ? home.split("/").pop()! : MAIN;
       reads.push(id);
       const [fiveHour, weekly] = levels[id] ?? [0, 0];
-      return { fetchedAt: new Date().toISOString(), windows: windows(fiveHour, weekly, Date.now()), error: null, cached: false, resets: null };
+      return { fetchedAt: new Date().toISOString(), windows: windows(fiveHour, weekly, periodStart), error: null, cached: false, resets: null };
     },
     redeemReset: async () => ({ outcome: "none", message: "none", left: 0 }),
     login: async () => {
@@ -214,7 +216,8 @@ async function setUp(levels: Record<string, [number, number]>, state: Partial<St
   reads.length = 0;
   const turnEnds = () =>
     service.onTurnEnded({ agent: { id: AGENT, provider: "claude" }, turnId: "t", outcome: { kind: "completed" }, timeline: [] } as never, context);
-  return { service, store, reads, reopened, notes, turnEnds };
+  const turnStarts = () => service.onTurnStarted({ id: AGENT, provider: "claude" }, context);
+  return { service, store, reads, reopened, notes, turnEnds, turnStarts };
 }
 
 describe("switch early after a turn", () => {
@@ -229,6 +232,41 @@ describe("switch early after a turn", () => {
     expect(state.bindings[AGENT]).toMatchObject({ accountId: SPARE, source: "auto" });
     expect(state.sessions[AGENT]?.accountId).toBe(SPARE);
     expect(notes.at(-1)).toMatchObject({ reason: "early", from: MAIN, to: SPARE, outcome: "switched", detail: "at 84% of its 5-hour limit" });
+  });
+
+  it("moves before the line when the account is climbing fast enough to cross it during the next turn", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(NOW);
+      const levels: Record<string, [number, number]> = { [MAIN]: [50, 40], [SPARE]: [10, 20] };
+      const { store, reopened, notes, turnEnds, turnStarts } = await setUp(levels);
+      await turnStarts();
+      // A ten-minute turn, while the account's agents together took the 5-hour window from 50% to 70%.
+      vi.setSystemTime(NOW + 10 * 60_000);
+      levels[MAIN] = [70, 41];
+      await turnEnds();
+      expect(reopened).toEqual([AGENT]);
+      expect((await store.read()).bindings[AGENT]).toMatchObject({ accountId: SPARE, source: "auto" });
+      expect(notes.at(-1)).toMatchObject({ reason: "early", outcome: "switched", detail: "at 70% of its 5-hour limit, heading for 90%" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays below the line when the account is climbing too slowly to cross it during the next turn", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(NOW);
+      const levels: Record<string, [number, number]> = { [MAIN]: [68, 40], [SPARE]: [10, 20] };
+      const { reopened, turnEnds, turnStarts } = await setUp(levels);
+      await turnStarts();
+      vi.setSystemTime(NOW + 10 * 60_000);
+      levels[MAIN] = [70, 40];
+      await turnEnds();
+      expect(reopened).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stays when the account is below its line", async () => {
