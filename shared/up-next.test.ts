@@ -69,16 +69,18 @@ describe("upNextOrder", () => {
   const team = view("claude-team", 11, 94, { isDefault: true });
   const max = view("claude-max", 3, 32);
   const roles = (rows: ReturnType<typeof upNextOrder>) => rows.map(({ account, role }) => [account.id, role]);
+  const SPREAD = { balanceNewAgents: true, autoSwitch: true };
+  const DEFAULT_FIRST = { balanceNewAgents: false, autoSwitch: true };
 
   it("sends new agents and switches to the top when new agents are spread", () => {
-    expect(roles(upNextOrder([team, max], NOW, undefined, true))).toEqual([
+    expect(roles(upNextOrder([team, max], NOW, undefined, SPREAD))).toEqual([
       ["claude-max", "here"],
       ["claude-team", null],
     ]);
   });
 
   it("starts new agents on the default when they aren't spread, and switches to the top", () => {
-    expect(roles(upNextOrder([team, max], NOW, undefined, false))).toEqual([
+    expect(roles(upNextOrder([team, max], NOW, undefined, DEFAULT_FIRST))).toEqual([
       ["claude-max", "switch"],
       ["claude-team", "start"],
     ]);
@@ -87,11 +89,28 @@ describe("upNextOrder", () => {
   it("lists an account kept for a project after the shared ones and never on top", () => {
     const kept = view("claude-kept", 0, 2, { projects: [{ projectId: "p1", name: "Gaz" }] });
     const out = view("claude-out", 0, 1, { status: "limited" });
-    expect(roles(upNextOrder([out, kept, team, max], NOW, undefined, true))).toEqual([
+    expect(roles(upNextOrder([out, kept, team, max], NOW, undefined, SPREAD))).toEqual([
       ["claude-max", "here"],
       ["claude-team", null],
       ["claude-kept", "project"],
       ["claude-out", null],
+    ]);
+  });
+
+  it("starts new agents off a default that switch early finds nearly full", () => {
+    // 85% of the 5-hour window is past switch early's 80% line, so routing skips the default.
+    const full = { ...team, usage: usage(fiveHour(85), weekly(11, 94)) };
+    expect(roles(upNextOrder([full, max], NOW, { short: 80, long: 95 }, DEFAULT_FIRST))).toEqual([
+      ["claude-max", "here"],
+      ["claude-team", null],
+    ]);
+  });
+
+  it("names no start when new agents stay on a limited default because switching is off", () => {
+    const out = { ...team, status: "limited" as const };
+    expect(roles(upNextOrder([out, max], NOW, undefined, { balanceNewAgents: false, autoSwitch: false }))).toEqual([
+      ["claude-max", "switch"],
+      ["claude-team", null],
     ]);
   });
 });

@@ -75,7 +75,7 @@ export function upNextOrder(
   accounts: AccountView[],
   now: number,
   lines: UpNextLines | undefined,
-  balanceNewAgents: boolean,
+  { balanceNewAgents, autoSwitch }: { balanceNewAgents: boolean; autoSwitch: boolean },
 ): { account: AccountView; rank: UpNextRank; role: UpNextRole }[] {
   const kept = (account: AccountView) => account.projects.length > 0;
   const ranked = accounts.map((account) => ({ account, rank: upNextRank(account.usage, now, lines) }));
@@ -89,7 +89,9 @@ export function upNextOrder(
     );
   const shared = open.filter(({ account }) => !kept(account));
   const top = shared[0]?.account;
-  const start = balanceNewAgents ? top : (shared.find(({ account }) => account.isDefault)?.account ?? top);
+  const home = shared.find(({ account, rank }) => account.isDefault && !(lines && rank.tier === 2))?.account;
+  const stuck = !autoSwitch && accounts.some((account) => account.isDefault && account.status === "limited");
+  const start = balanceNewAgents ? top : stuck ? undefined : (home ?? top);
   const role = (account: AccountView): UpNextRole =>
     kept(account) ? "project" : account === start ? (start === top ? "here" : "start") : account === top ? "switch" : null;
   return [...shared, ...open.filter(({ account }) => kept(account)), ...ranked.filter(({ account }) => !usable(account))].map((row) => ({

@@ -8,6 +8,8 @@ import { Badge, Card, useText } from "./ui";
 
 type Theme = PluginSurfaceProps["theme"];
 
+const DEFAULTS = preferences.schema.parse({});
+
 /** The lines the router ranks with: switch early's, or the defaults while it's off. */
 export function useUpNextLines(): UpNextLines | undefined {
   const settings = useSettings(preferences);
@@ -49,7 +51,7 @@ export function UpNext({ theme, accounts }: { theme: Theme; accounts: AccountVie
   const settings = useSettings(preferences);
   if (accounts.length < 2) return null;
   const now = Date.now();
-  const order = upNextOrder(accounts, now, lines, settings.status === "ready" ? settings.values.balanceNewAgents : true);
+  const order = upNextOrder(accounts, now, lines, settings.status === "ready" ? settings.values : DEFAULTS);
   return (
     <Card theme={theme}>
       <View accessibilityLabel="Up next" style={{ gap: 8 }}>
