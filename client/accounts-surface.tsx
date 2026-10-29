@@ -356,7 +356,7 @@ function AccountCard({
               theme={theme}
               icon="Star"
               label="Make default"
-              tooltip="Make default: new agents start on this account"
+              tooltip="Make default: agents that follow the default use this account, and new agents start here when spreading is off"
               busy={busy === "default"}
               onPress={() => void makeDefault()}
             />
@@ -505,7 +505,7 @@ function AccountCard({
           <Text style={text.body}>
             {FAMILY_PORTABLE[account.family]
               ? "This signs the account out on this machine and deletes its saved login. Agents using it move to the default account; their conversations are kept."
-              : `This signs the account out on this machine and deletes its saved login. New agents use the default account. Existing ${FAMILY_LABEL[account.family]} conversations on it can't move, so start new agents for them.`}
+              : `This signs the account out on this machine and deletes its saved login. Existing ${FAMILY_LABEL[account.family]} conversations on it can't move, so start new agents for them.`}
           </Text>
           <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
             <Button theme={theme} label="Cancel" tooltip="Keep this account" tooltipAlign="end" onPress={() => setConfirmRemove(false)} />
@@ -767,7 +767,7 @@ function AutomationSettings({ theme }: { theme: Theme }) {
         />
         <SettingsSwitch
           label="Move open agents when the default changes"
-          hint="Off: open agents stay on the account they're using, even after they reopen. New agents, and agents that aren't open at the time, use the new default."
+          hint="Off: open agents stay on the account they're using, even after they reopen. Agents that aren't open at the time, and new agents when spreading is off, use the new default."
           value={settings.values.moveAgentsOnDefaultChange}
           disabled={settings.saving}
           onValueChange={(moveAgentsOnDefaultChange) => save({ moveAgentsOnDefaultChange })}
