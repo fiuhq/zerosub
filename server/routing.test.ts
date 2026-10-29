@@ -143,6 +143,22 @@ describe("mostAvailable", () => {
     expect(mostAvailable(state, "claude", () => usage(20), NOW)?.id).toBe("claude-work");
   });
 
+  it("puts the account whose spare weekly quota resets soonest ahead of the default", () => {
+    const at = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
+    const reading = (five: number, week: number, hours: number): Usage => ({
+      ...usage(five),
+      windows: [
+        { id: "five_hour", label: "5-hour", usedPercent: five, resetsAt: at(4) },
+        { id: "seven_day", label: "Weekly", usedPercent: week, resetsAt: at(hours) },
+      ],
+    });
+    const team = account({ id: "claude-team" });
+    const max = account({ id: "claude-max" });
+    const state = stateWith([team, max], { defaults: { claude: "claude-team", codex: null } });
+    const usageOf = (id: string) => (id === "claude-team" ? reading(0, 11, 94) : reading(18, 3, 32));
+    expect(mostAvailable(state, "claude", usageOf, NOW)?.id).toBe("claude-max");
+  });
+
   it("never picks a signed-out account", () => {
     const main = account({ id: "claude-main", kind: "main", home: null, signedIn: false });
     const state = stateWith([main]);

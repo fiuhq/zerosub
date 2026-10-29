@@ -47,7 +47,7 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
           />
           <SettingsSwitch
             label="Move open agents when the default changes"
-            hint="Off: open agents stay on the account they're using, even after they reopen. New agents, and agents that aren't open at the time, use the new default."
+            hint="Off: open agents stay on the account they're using, even after they reopen. Agents that aren't open at the time, and new agents when spreading is off, use the new default."
             value={settings.values.moveAgentsOnDefaultChange}
             disabled={settings.saving}
             onValueChange={(moveAgentsOnDefaultChange) => save({ moveAgentsOnDefaultChange })}
@@ -58,7 +58,7 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
         <SettingsCard>
           <SettingsSwitch
             label="Switch accounts when one hits its limit"
-            hint="The agent moves to the account with the most room left."
+            hint="The agent moves to the first account in Up next with room to spare: spare quota that resets soonest goes first."
             value={settings.values.autoSwitch}
             disabled={settings.saving}
             onValueChange={(autoSwitch) => save({ autoSwitch })}
@@ -119,7 +119,7 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
         <SettingsCard>
           <SettingsSwitch
             label="Spread new agents across accounts"
-            hint="New agents start on the account with the most room instead of the default."
+            hint="New agents start at the top of Up next instead of on the default."
             value={settings.values.balanceNewAgents}
             disabled={settings.saving}
             onValueChange={(balanceNewAgents) => save({ balanceNewAgents })}

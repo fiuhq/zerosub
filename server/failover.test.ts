@@ -837,6 +837,7 @@ describe("changing the default account", () => {
         },
       },
     );
+    service.setPreferences({ ...KEEP, balanceNewAgents: false });
     // Routed by the old default, but it hasn't recorded where it opens yet.
     const opening = service.onSessionOpen(
       { agentId: "starting", provider: "claude", reason: "create", purpose: "interactive", env: {} } as never,

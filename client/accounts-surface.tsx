@@ -21,6 +21,7 @@ import { AddAccountModal } from "./add-account";
 import { ResetConfirm, redeemToast, resetBadge } from "./reset-confirm";
 import { describe, useStore, VISIBLE_POLL_MS, type ZeroSubStore } from "./store";
 import { Badge, Button, Card, IconButton, UsageBar, useText } from "./ui";
+import { UpNext, useUpNextLines } from "./up-next";
 
 type Theme = PluginSurfaceProps["theme"];
 
@@ -77,7 +78,7 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
           </View>
           <Text style={text.muted}>
             Keep several {familyPhrase()} accounts signed in. Each agent uses one; when an account
-            hits its limit, agents move to another and keep going.
+            runs out, agents move to the one whose spare quota runs out soonest and keep going.
           </Text>
         </View>
 
@@ -211,6 +212,7 @@ function FamilySection({
       {accounts.length === 0 ? (
         <Text style={text.muted}>No {FAMILY_LABEL[family]} accounts yet.</Text>
       ) : null}
+      <UpNext theme={theme} accounts={accounts} />
       {chunk(accounts, compact ? 1 : 2).map((row) => (
         <View key={row.map((account) => account.id).join()} style={{ flexDirection: "row", gap: 10 }}>
           {row.map((account) => (
@@ -354,7 +356,7 @@ function AccountCard({
               theme={theme}
               icon="Star"
               label="Make default"
-              tooltip="Make default: new agents start on this account"
+              tooltip="Make default: agents that follow the default use this account, and new agents start here when spreading is off"
               busy={busy === "default"}
               onPress={() => void makeDefault()}
             />
@@ -503,7 +505,7 @@ function AccountCard({
           <Text style={text.body}>
             {FAMILY_PORTABLE[account.family]
               ? "This signs the account out on this machine and deletes its saved login. Agents using it move to the default account; their conversations are kept."
-              : `This signs the account out on this machine and deletes its saved login. New agents use the default account. Existing ${FAMILY_LABEL[account.family]} conversations on it can't move, so start new agents for them.`}
+              : `This signs the account out on this machine and deletes its saved login. Existing ${FAMILY_LABEL[account.family]} conversations on it can't move, so start new agents for them.`}
           </Text>
           <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
             <Button theme={theme} label="Cancel" tooltip="Keep this account" tooltipAlign="end" onPress={() => setConfirmRemove(false)} />
@@ -725,6 +727,7 @@ function Avatar({ theme, label }: { theme: Theme; label: string }) {
 function AutomationSettings({ theme }: { theme: Theme }) {
   const settings = useSettings(preferences);
   const text = useText(theme);
+  const lines = useUpNextLines();
   if (settings.status === "loading") return null;
   if (settings.status !== "ready") {
     return <Text style={text.danger}>Preferences unavailable: {settings.error}</Text>;
@@ -739,7 +742,11 @@ function AutomationSettings({ theme }: { theme: Theme }) {
       <SettingsCard>
         <SettingsSwitch
           label="Switch accounts when one hits its limit"
-          hint="Agents move to the account with the most room left."
+          hint={
+            lines
+              ? `Agents move early, once an account reaches ${lines.short}% of its 5-hour or ${lines.long}% of its weekly limit, to the first account in Up next with room to spare. Change the lines in ZeroSub's settings.`
+              : "Agents move at the limit to the top of Up next."
+          }
           value={settings.values.autoSwitch}
           disabled={settings.saving}
           onValueChange={(autoSwitch) => save({ autoSwitch })}
@@ -753,14 +760,14 @@ function AutomationSettings({ theme }: { theme: Theme }) {
         />
         <SettingsSwitch
           label="Spread new agents across accounts"
-          hint="New agents start on the account with the most room instead of the default."
+          hint="New agents start at the top of Up next instead of on the default."
           value={settings.values.balanceNewAgents}
           disabled={settings.saving}
           onValueChange={(balanceNewAgents) => save({ balanceNewAgents })}
         />
         <SettingsSwitch
           label="Move open agents when the default changes"
-          hint="Off: open agents stay on the account they're using, even after they reopen. New agents, and agents that aren't open at the time, use the new default."
+          hint="Off: open agents stay on the account they're using, even after they reopen. Agents that aren't open at the time, and new agents when spreading is off, use the new default."
           value={settings.values.moveAgentsOnDefaultChange}
           disabled={settings.saving}
           onValueChange={(moveAgentsOnDefaultChange) => save({ moveAgentsOnDefaultChange })}
