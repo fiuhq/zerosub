@@ -224,6 +224,94 @@ export function IconButton({
   );
 }
 
+/** One entry of an ActionsMenu. */
+export interface MenuAction {
+  key: string;
+  icon: string;
+  label: string;
+  /** Read out with the label; a menu row has room for the label only. */
+  hint?: string;
+  tone?: "default" | "danger";
+  onPress(): void;
+}
+
+/**
+ * A ⋯ button that opens its actions as a labelled list under it. A card in a narrow pane has no room for a row of
+ * icons; picking an action, or pressing ⋯ again, closes it.
+ */
+export function ActionsMenu({
+  theme,
+  label,
+  actions,
+  busy,
+}: {
+  theme: Theme;
+  label: string;
+  actions: MenuAction[];
+  busy?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const colors = theme.colors;
+  return (
+    <View style={{ position: "relative", zIndex: open ? 1000 : undefined }}>
+      <IconButton theme={theme} icon="Ellipsis" label={label} busy={busy} onPress={() => setOpen((value) => !value)} />
+      {open ? (
+        <View
+          accessibilityRole="menu"
+          accessibilityLabel={label}
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            marginTop: 4,
+            minWidth: 208,
+            padding: 6,
+            gap: 2,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface2,
+            shadowColor: "#000",
+            shadowOpacity: 0.35,
+            shadowRadius: 12,
+            shadowOffset: { width: 0, height: 6 },
+            elevation: 8,
+          }}
+        >
+          {actions.map((action) => {
+            const color = action.tone === "danger" ? colors.statusDanger : colors.foreground;
+            return (
+              <Pressable
+                key={action.key}
+                accessibilityRole="menuitem"
+                accessibilityLabel={action.label}
+                accessibilityHint={action.hint}
+                onPress={() => {
+                  setOpen(false);
+                  action.onPress();
+                }}
+                style={(state) => ({
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  paddingVertical: 8,
+                  paddingHorizontal: 10,
+                  borderRadius: 7,
+                  backgroundColor:
+                    state.pressed || (state as { hovered?: boolean }).hovered ? colors.surface1 : "transparent",
+                })}
+              >
+                <Icon name={action.icon} size={16} color={color} />
+                <Text style={{ color, fontSize: 13, fontWeight: "500" }}>{action.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export function Badge({
   theme,
   label,
