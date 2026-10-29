@@ -1,4 +1,4 @@
-import type { Usage, UsageWindow } from "./model";
+import type { AccountView, Usage, UsageWindow } from "./model";
 
 /**
  * Up next: the order agents are given accounts in. Quota a window doesn't use before it resets is
@@ -56,4 +56,44 @@ export function upNextRank(usage: Usage | null | undefined, now: number, lines: 
 /** Negative when `a` goes before `b`; 0 when Up next can't tell them apart. */
 export function compareUpNext(a: UpNextRank, b: UpNextRank): number {
   return a.tier - b.tier || b.perHour - a.perHour;
+}
+
+export const usable = (account: AccountView) => account.status === "ready" || account.status === "checking";
+
+/**
+ * What a row says about routing. here: new agents and switches both go there. start: new agents
+ * start there, on the default. switch: the next switch goes there. project: kept for its projects.
+ */
+export type UpNextRole = "here" | "start" | "switch" | "project" | null;
+
+/**
+ * The family's accounts in the order agents are given them (server/routing.ts `mostAvailable`):
+ * Up next first, then the default, then the CLI login. Accounts kept for a project come after the
+ * shared ones, since agents of other projects never go there; accounts nothing is routed to come last.
+ */
+export function upNextOrder(
+  accounts: AccountView[],
+  now: number,
+  lines: UpNextLines | undefined,
+  balanceNewAgents: boolean,
+): { account: AccountView; rank: UpNextRank; role: UpNextRole }[] {
+  const kept = (account: AccountView) => account.projects.length > 0;
+  const ranked = accounts.map((account) => ({ account, rank: upNextRank(account.usage, now, lines) }));
+  const open = ranked
+    .filter(({ account }) => usable(account))
+    .sort(
+      (a, b) =>
+        compareUpNext(a.rank, b.rank) ||
+        Number(b.account.isDefault) - Number(a.account.isDefault) ||
+        Number(b.account.kind === "main") - Number(a.account.kind === "main"),
+    );
+  const shared = open.filter(({ account }) => !kept(account));
+  const top = shared[0]?.account;
+  const start = balanceNewAgents ? top : (shared.find(({ account }) => account.isDefault)?.account ?? top);
+  const role = (account: AccountView): UpNextRole =>
+    kept(account) ? "project" : account === start ? (start === top ? "here" : "start") : account === top ? "switch" : null;
+  return [...shared, ...open.filter(({ account }) => kept(account)), ...ranked.filter(({ account }) => !usable(account))].map((row) => ({
+    ...row,
+    role: role(row.account),
+  }));
 }

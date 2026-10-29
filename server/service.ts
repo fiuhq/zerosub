@@ -96,7 +96,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   moveAgentsOnDefaultChange: true,
   switchEarlyAt: 80,
   switchEarlyWeeklyAt: 95,
-  balanceNewAgents: false,
+  balanceNewAgents: true,
   showComposerPill: true,
   autoRedeem: false,
   forkOtherProvider: false,

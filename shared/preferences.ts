@@ -32,7 +32,7 @@ export const preferences = defineSettings({
     /** The same, for weekly and longer windows, which one turn barely moves. */
     switchEarlyWeeklyAt: z.number().int().min(50).max(100).default(95),
     /** New agents start on the account with the most headroom instead of the default. */
-    balanceNewAgents: z.boolean().default(false),
+    balanceNewAgents: z.boolean().default(true),
     /** When every account of a provider is at its limit, spend a banked reset instead of stopping. */
     autoRedeem: z.boolean().default(false),
     /**

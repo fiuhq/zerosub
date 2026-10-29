@@ -744,7 +744,7 @@ function AutomationSettings({ theme }: { theme: Theme }) {
           label="Switch accounts when one hits its limit"
           hint={
             lines
-              ? `Agents move early, once an account reaches ${lines.short}% of its 5-hour or ${lines.long}% of its weekly limit, to the top of Up next. Change the lines in ZeroSub's settings.`
+              ? `Agents move early, once an account reaches ${lines.short}% of its 5-hour or ${lines.long}% of its weekly limit, to the first account in Up next with room to spare. Change the lines in ZeroSub's settings.`
               : "Agents move at the limit to the top of Up next."
           }
           value={settings.values.autoSwitch}

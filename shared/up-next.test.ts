@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Usage, UsageWindow } from "./model";
-import { compareUpNext, upNextRank } from "./up-next";
+import type { AccountView, Usage, UsageWindow } from "./model";
+import { compareUpNext, upNextOrder, upNextRank } from "./up-next";
 
 const NOW = Date.parse("2026-10-29T12:00:00Z");
 const inHours = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
@@ -41,5 +41,57 @@ describe("upNextRank", () => {
 
   it("ranks a plan with only a 5-hour window by what it has left", () => {
     expect(compareUpNext(upNextRank(usage(fiveHour(20)), NOW), upNextRank(usage(fiveHour(60)), NOW))).toBeLessThan(0);
+  });
+});
+
+function view(id: string, weeklyUsed: number, resetsInHours: number, patch: Partial<AccountView> = {}): AccountView {
+  return {
+    id,
+    family: "claude",
+    label: id,
+    kind: "managed",
+    email: null,
+    plan: null,
+    organization: null,
+    status: "ready",
+    isDefault: false,
+    limitedUntil: null,
+    usage: usage(fiveHour(0), weekly(weeklyUsed, resetsInHours)),
+    agentCount: 0,
+    home: null,
+    projects: [],
+    ...patch,
+  };
+}
+
+describe("upNextOrder", () => {
+  // The worked example: the default has 89% of a week left resetting in 94h, the spare 97% in 32h.
+  const team = view("claude-team", 11, 94, { isDefault: true });
+  const max = view("claude-max", 3, 32);
+  const roles = (rows: ReturnType<typeof upNextOrder>) => rows.map(({ account, role }) => [account.id, role]);
+
+  it("sends new agents and switches to the top when new agents are spread", () => {
+    expect(roles(upNextOrder([team, max], NOW, undefined, true))).toEqual([
+      ["claude-max", "here"],
+      ["claude-team", null],
+    ]);
+  });
+
+  it("starts new agents on the default when they aren't spread, and switches to the top", () => {
+    expect(roles(upNextOrder([team, max], NOW, undefined, false))).toEqual([
+      ["claude-max", "switch"],
+      ["claude-team", "start"],
+    ]);
+  });
+
+  it("lists an account kept for a project after the shared ones and never on top", () => {
+    const kept = view("claude-kept", 0, 2, { projects: [{ projectId: "p1", name: "Gaz" }] });
+    const out = view("claude-out", 0, 1, { status: "limited" });
+    expect(roles(upNextOrder([out, kept, team, max], NOW, undefined, true))).toEqual([
+      ["claude-max", "here"],
+      ["claude-team", null],
+      ["claude-kept", "project"],
+      ["claude-out", null],
+    ]);
   });
 });

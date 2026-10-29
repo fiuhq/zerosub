@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import { formatResetIn } from "../shared/format";
 import type { AccountView } from "../shared/model";
 import { preferences } from "../shared/preferences";
-import { compareUpNext, upNextRank, type UpNextLines, type UpNextRank } from "../shared/up-next";
+import { upNextOrder, usable, type UpNextLines, type UpNextRank, type UpNextRole } from "../shared/up-next";
 import { Badge, Card, useText } from "./ui";
 
 type Theme = PluginSurfaceProps["theme"];
@@ -14,25 +14,6 @@ export function useUpNextLines(): UpNextLines | undefined {
   if (settings.status !== "ready") return undefined;
   const { autoSwitch, switchEarlyAt, switchEarlyWeeklyAt } = settings.values;
   return autoSwitch && (switchEarlyAt < 100 || switchEarlyWeeklyAt < 100) ? { short: switchEarlyAt, long: switchEarlyWeeklyAt } : undefined;
-}
-
-const usable = (account: AccountView) => account.status === "ready" || account.status === "checking";
-
-/**
- * The family's accounts in the order agents are given them (server/routing.ts `mostAvailable`):
- * Up next first, then the default, then the CLI login; accounts nothing is routed to come last.
- */
-export function upNextOrder(accounts: AccountView[], now: number, lines?: UpNextLines): { account: AccountView; rank: UpNextRank }[] {
-  const ranked = accounts.map((account) => ({ account, rank: upNextRank(account.usage, now, lines) }));
-  const open = ranked
-    .filter(({ account }) => usable(account))
-    .sort(
-      (a, b) =>
-        compareUpNext(a.rank, b.rank) ||
-        Number(b.account.isDefault) - Number(a.account.isDefault) ||
-        Number(b.account.kind === "main") - Number(a.account.kind === "main"),
-    );
-  return [...open, ...ranked.filter(({ account }) => !usable(account))];
 }
 
 function detail(account: AccountView, rank: UpNextRank, now: number): string {
@@ -49,19 +30,26 @@ function detail(account: AccountView, rank: UpNextRank, now: number): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-function badge(account: AccountView, rank: UpNextRank, first: boolean): { label: string; tone: "accent" | "success" | "warning" | "danger" | "muted" } {
+function badge(account: AccountView, rank: UpNextRank, role: UpNextRole): { label: string; tone: "accent" | "success" | "warning" | "danger" | "muted" } {
   if (account.status === "limited") return { label: "Out", tone: "danger" };
   if (!usable(account)) return { label: account.status === "disabled" ? "Disabled" : "Signed out", tone: "muted" };
-  if (first) return { label: "Agents go here", tone: "accent" };
+  if (role === "project") {
+    const [only, ...more] = account.projects;
+    return { label: only?.name && more.length === 0 ? `Kept for ${only.name}` : "Kept for a project", tone: "muted" };
+  }
+  if (role === "here") return { label: "Agents go here", tone: "accent" };
+  if (role === "start") return { label: "New agents start here", tone: "accent" };
+  if (role === "switch") return { label: "Next on a switch", tone: "accent" };
   return rank.tier === 2 ? { label: "Nearly full", tone: "warning" } : { label: "Ready", tone: "success" };
 }
 
 export function UpNext({ theme, accounts }: { theme: Theme; accounts: AccountView[] }) {
   const text = useText(theme);
   const lines = useUpNextLines();
+  const settings = useSettings(preferences);
   if (accounts.length < 2) return null;
   const now = Date.now();
-  const order = upNextOrder(accounts, now, lines);
+  const order = upNextOrder(accounts, now, lines, settings.status === "ready" ? settings.values.balanceNewAgents : true);
   return (
     <Card theme={theme}>
       <View accessibilityLabel="Up next" style={{ gap: 8 }}>
@@ -71,8 +59,8 @@ export function UpNext({ theme, accounts }: { theme: Theme; accounts: AccountVie
           </Text>
           <Text style={text.small}>Spare quota that resets soonest goes first; the default breaks ties</Text>
         </View>
-        {order.map(({ account, rank }, index) => {
-          const tag = badge(account, rank, index === 0 && usable(account));
+        {order.map(({ account, rank, role }, index) => {
+          const tag = badge(account, rank, role);
           return (
             <View
               key={account.id}
