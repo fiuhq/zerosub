@@ -1,7 +1,7 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Modal, Platform, Pressable, Text, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Modal, Platform, Pressable, Text, View } from "react-native";
 import { formatPercent, formatResetIn } from "../shared/format";
 import type { UsageWindow } from "../shared/model";
 
@@ -236,6 +236,13 @@ export interface MenuAction {
 }
 
 const MENU_WIDTH = 208;
+
+interface Frame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 /** A menu row's height, near enough to keep the list on screen without measuring it. */
 const MENU_ROW_HEIGHT = 36;
 
@@ -255,10 +262,11 @@ export function ActionsMenu({
   actions: MenuAction[];
   busy?: boolean;
 }) {
-  const [anchor, setAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [anchor, setAnchor] = useState<Frame | null>(null);
+  const [root, setRoot] = useState<Frame | null>(null);
   const button = useRef<View>(null);
+  const overlay = useRef<View>(null);
   const picked = useRef<MenuAction | null>(null);
-  const screen = useWindowDimensions();
   const colors = theme.colors;
   const close = () => setAnchor(null);
   const runPicked = () => {
@@ -273,74 +281,87 @@ export function ActionsMenu({
       <IconButton theme={theme} icon="Ellipsis" label={label} busy={busy} onPress={anchor ? close : openMenu} />
       <Modal
         transparent
-        statusBarTranslucent
-        navigationBarTranslucent
         animationType="none"
         visible={anchor !== null}
         onRequestClose={close}
         onDismiss={runPicked}
       >
-        <Pressable
-          accessibilityLabel={`Close ${label}`}
-          onPress={close}
-          style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
-        />
-        {anchor ? (
-          <View
-            accessibilityRole="menu"
-            accessibilityLabel={label}
-            style={{
-              position: "absolute",
-              top: Math.max(
-                8,
-                Math.min(anchor.y + anchor.height + 4, screen.height - 8 - (actions.length * MENU_ROW_HEIGHT + 14)),
-              ),
-              right: Math.max(8, Math.min(screen.width - (anchor.x + anchor.width), screen.width - 8 - MENU_WIDTH)),
-              minWidth: MENU_WIDTH,
-              padding: 6,
-              gap: 2,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: colors.border,
-              backgroundColor: colors.surface2,
-              shadowColor: "#000",
-              shadowOpacity: 0.35,
-              shadowRadius: 12,
-              shadowOffset: { width: 0, height: 6 },
-              elevation: 8,
-            }}
-          >
-            {actions.map((action) => {
-              const color = action.tone === "danger" ? colors.statusDanger : colors.foreground;
-              return (
-                <Pressable
-                  key={action.key}
-                  accessibilityRole="menuitem"
-                  accessibilityLabel={action.label}
-                  accessibilityHint={action.hint}
-                  onPress={() => {
-                    picked.current = action;
-                    close();
-                    if (Platform.OS !== "ios") runPicked();
-                  }}
-                  style={(state) => ({
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 10,
-                    paddingVertical: 8,
-                    paddingHorizontal: 10,
-                    borderRadius: 7,
-                    backgroundColor:
-                      state.pressed || (state as { hovered?: boolean }).hovered ? colors.surface1 : "transparent",
-                  })}
-                >
-                  <Icon name={action.icon} size={16} color={color} />
-                  <Text style={{ color, fontSize: 13, fontWeight: "500" }}>{action.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
+        <View
+          ref={overlay}
+          collapsable={false}
+          style={{ flex: 1 }}
+          onLayout={() =>
+            overlay.current?.measureInWindow((x, y, width, height) => setRoot({ x, y, width, height }))
+          }
+        >
+          <Pressable
+            accessibilityLabel={`Close ${label}`}
+            onPress={close}
+            style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+          />
+          {anchor && root ? (
+            <View
+              accessibilityRole="menu"
+              accessibilityLabel={label}
+              style={{
+                position: "absolute",
+                top: Math.max(
+                  8,
+                  Math.min(
+                    anchor.y - root.y + anchor.height + 4,
+                    root.height - 8 - (actions.length * MENU_ROW_HEIGHT + 14),
+                  ),
+                ),
+                right: Math.max(
+                  8,
+                  Math.min(root.x + root.width - (anchor.x + anchor.width), root.width - 8 - MENU_WIDTH),
+                ),
+                minWidth: MENU_WIDTH,
+                padding: 6,
+                gap: 2,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: colors.border,
+                backgroundColor: colors.surface2,
+                shadowColor: "#000",
+                shadowOpacity: 0.35,
+                shadowRadius: 12,
+                shadowOffset: { width: 0, height: 6 },
+                elevation: 8,
+              }}
+            >
+              {actions.map((action) => {
+                const color = action.tone === "danger" ? colors.statusDanger : colors.foreground;
+                return (
+                  <Pressable
+                    key={action.key}
+                    accessibilityRole="menuitem"
+                    accessibilityLabel={action.label}
+                    accessibilityHint={action.hint}
+                    onPress={() => {
+                      picked.current = action;
+                      close();
+                      if (Platform.OS !== "ios") runPicked();
+                    }}
+                    style={(state) => ({
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                      paddingVertical: 8,
+                      paddingHorizontal: 10,
+                      borderRadius: 7,
+                      backgroundColor:
+                        state.pressed || (state as { hovered?: boolean }).hovered ? colors.surface1 : "transparent",
+                    })}
+                  >
+                    <Icon name={action.icon} size={16} color={color} />
+                    <Text style={{ color, fontSize: 13, fontWeight: "500" }}>{action.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
       </Modal>
     </View>
   );
