@@ -188,7 +188,9 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     if (!input.portable && bound?.id !== dedicated.id) bind = { accountId: dedicated.id, source: "thread", at };
   }
   if (!account && fresh && input.balanceNewAgents && accounts.length > 1) {
-    account = mostAvailable(state, input.family, input.usageOf, input.now, reserved, input.early);
+    // An agent of no known project spreads over the shared accounts only, as Up next shows.
+    const kept = input.projectId ? reserved : new Set(state.projects.map((rule) => rule.accountId));
+    account = mostAvailable(state, input.family, input.usageOf, input.now, kept, input.early);
     if (account) bind = { accountId: account.id, source: "balance", at };
   }
   if (!account) {

@@ -126,6 +126,13 @@ describe("project accounts", () => {
     expect(route(stateWith({ defaults: { claude: WORK, codex: null } }), { projectId: null })?.account.id).toBe(WORK);
   });
 
+  it("spread an agent whose project is unknown over shared accounts only", () => {
+    const usageOf = (id: string) => (id === WORK ? reading(0) : reading(50));
+    expect(route(stateWith(), { projectId: null, balanceNewAgents: true, usageOf })?.account.id).not.toBe(WORK);
+    const everyKept = stateWith({ projects: [MAIN, WORK, SPARE].map((accountId) => ({ projectId: FLXBL, accountId, name: null })) });
+    expect(route(everyKept, { projectId: null, balanceNewAgents: true, usageOf })?.account.id).toBe(MAIN);
+  });
+
   it("fail over only to accounts not set aside for another project", () => {
     const limited = account(WORK, "managed", { limitedUntil: new Date(NOW + 3_600_000).toISOString(), limitKind: "window" });
     const state = stateWith({
