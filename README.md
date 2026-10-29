@@ -185,6 +185,7 @@ Code layout:
 - `client/`: React Native UI (Accounts surface, sign-in modal, composer pill, commands, timeline note).
 - `server/`: routing, account homes, Claude and Codex adapters, failover.
 - `shared/`: RPC contracts and the view model.
+- `bin/zerosub-claude`: runs `claude` on the account ZeroSub would give a new agent, for tools Paseo doesn't launch.
 
 Report problems at [github.com/kapybara-org/ZeroSub/issues](https://github.com/kapybara-org/ZeroSub/issues).
 
