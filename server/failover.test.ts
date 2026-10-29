@@ -943,7 +943,7 @@ describe("a reading past its reset", () => {
         { claude, codex: { ...claude, family: "codex", portable: false } as FamilyAdapter },
         store,
         { resolve: async () => ({ claude: "claude" as const }) } as unknown as FamilyResolver,
-        {} as Reopener,
+        { locate: async () => "/usr/local/bin/paseo" } as unknown as Reopener,
       );
       service.setPreferences(preferences.schema.parse({}));
       await service.refreshUsage(MAIN, true);
@@ -953,6 +953,10 @@ describe("a reading past its reset", () => {
       vi.setSystemTime(NOW + 73 * 3_600_000);
       await service.refreshUsage(MAIN, true);
       expect(renewals).toEqual([false, false, true]);
+      // The renewed reading replaces the stale one, so the card and Up next see the reset.
+      const shown = (await service.view(fakePaseo().paseo as never)).accounts.find((entry) => entry.id === MAIN)?.usage;
+      expect(shown?.error).toBeNull();
+      expect(shown?.windows.map((window) => window.usedPercent)).toEqual([0]);
     } finally {
       vi.useRealTimers();
     }
