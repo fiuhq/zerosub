@@ -41,7 +41,7 @@ import { equivalentMode } from "./modes";
 import { homesDir } from "./paths";
 import { Reopener } from "./reopen";
 import { SwitchGuard } from "./switch-guard";
-import { loadReadings, mergeUsage, saveReadings, showLimit } from "./usage";
+import { loadReadings, mergeUsage, pastReset, saveReadings, showLimit } from "./usage";
 import { chooseAccount, isLimited, isUsable, mostAvailable } from "./routing";
 import {
   MAIN_ACCOUNT_ID,
@@ -1279,7 +1279,10 @@ export class Service {
 
   // ------------------------------------------------------------------ usage
 
-  /** `renewLogin` lets the CLI refresh an expired sign-in first (explicit refreshes only: it's slow). */
+  /**
+   * `renewLogin` lets the CLI refresh an expired sign-in first (it's slow: explicit refreshes, and
+   * readings past a reset, which would otherwise stay full until the account is next used).
+   */
   refreshUsage(accountId: string, force = false, renewLogin = false): Promise<void> {
     const pending = this.usageInFlight.get(accountId);
     if (pending) return pending;
@@ -1294,7 +1297,7 @@ export class Service {
       if (since < (force ? spacing : Math.max(spacing, 60_000))) return;
       this.usageAttemptAt.set(accountId, Date.now());
       const { retryAt, ...usage } = await this.adapters[account.family]
-        .usage(account.home, { renewLogin })
+        .usage(account.home, { renewLogin: renewLogin || pastReset(this.usage.get(accountId), Date.now()) })
         .catch(
           (error: unknown): UsageRead => ({ fetchedAt: new Date().toISOString(), windows: [], error: describe(error), cached: false, resets: null }),
         );
