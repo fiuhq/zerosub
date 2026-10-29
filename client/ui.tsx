@@ -1,7 +1,7 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { formatPercent, formatResetIn } from "../shared/format";
 import type { UsageWindow } from "../shared/model";
 
@@ -235,9 +235,14 @@ export interface MenuAction {
   onPress(): void;
 }
 
+const MENU_WIDTH = 208;
+/** A menu row's height, near enough to keep the list on screen without measuring it. */
+const MENU_ROW_HEIGHT = 36;
+
 /**
  * A ⋯ button that opens its actions as a labelled list under it. A card in a narrow pane has no room for a row of
- * icons; picking an action, or pressing ⋯ again, closes it.
+ * icons. The list floats above the whole window, so later cards never cover it; an outside tap, Escape or picking an
+ * action closes it.
  */
 export function ActionsMenu({
   theme,
@@ -250,64 +255,78 @@ export function ActionsMenu({
   actions: MenuAction[];
   busy?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const button = useRef<View>(null);
+  const screen = useWindowDimensions();
   const colors = theme.colors;
+  const close = () => setAnchor(null);
+  const openMenu = () =>
+    button.current?.measureInWindow((x, y, width, height) => setAnchor({ x, y, width, height }));
   return (
-    <View style={{ position: "relative", zIndex: open ? 1000 : undefined }}>
-      <IconButton theme={theme} icon="Ellipsis" label={label} busy={busy} onPress={() => setOpen((value) => !value)} />
-      {open ? (
-        <View
-          accessibilityRole="menu"
-          accessibilityLabel={label}
-          style={{
-            position: "absolute",
-            top: "100%",
-            right: 0,
-            marginTop: 4,
-            minWidth: 208,
-            padding: 6,
-            gap: 2,
-            borderRadius: 10,
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.surface2,
-            shadowColor: "#000",
-            shadowOpacity: 0.35,
-            shadowRadius: 12,
-            shadowOffset: { width: 0, height: 6 },
-            elevation: 8,
-          }}
-        >
-          {actions.map((action) => {
-            const color = action.tone === "danger" ? colors.statusDanger : colors.foreground;
-            return (
-              <Pressable
-                key={action.key}
-                accessibilityRole="menuitem"
-                accessibilityLabel={action.label}
-                accessibilityHint={action.hint}
-                onPress={() => {
-                  setOpen(false);
-                  action.onPress();
-                }}
-                style={(state) => ({
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 10,
-                  paddingVertical: 8,
-                  paddingHorizontal: 10,
-                  borderRadius: 7,
-                  backgroundColor:
-                    state.pressed || (state as { hovered?: boolean }).hovered ? colors.surface1 : "transparent",
-                })}
-              >
-                <Icon name={action.icon} size={16} color={color} />
-                <Text style={{ color, fontSize: 13, fontWeight: "500" }}>{action.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ) : null}
+    <View ref={button} collapsable={false}>
+      <IconButton theme={theme} icon="Ellipsis" label={label} busy={busy} onPress={anchor ? close : openMenu} />
+      <Modal transparent animationType="none" visible={anchor !== null} onRequestClose={close}>
+        <Pressable
+          accessibilityLabel={`Close ${label}`}
+          onPress={close}
+          style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
+        />
+        {anchor ? (
+          <View
+            accessibilityRole="menu"
+            accessibilityLabel={label}
+            style={{
+              position: "absolute",
+              top: Math.max(
+                8,
+                Math.min(anchor.y + anchor.height + 4, screen.height - 8 - (actions.length * MENU_ROW_HEIGHT + 14)),
+              ),
+              right: Math.max(8, Math.min(screen.width - (anchor.x + anchor.width), screen.width - 8 - MENU_WIDTH)),
+              minWidth: MENU_WIDTH,
+              padding: 6,
+              gap: 2,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.surface2,
+              shadowColor: "#000",
+              shadowOpacity: 0.35,
+              shadowRadius: 12,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 8,
+            }}
+          >
+            {actions.map((action) => {
+              const color = action.tone === "danger" ? colors.statusDanger : colors.foreground;
+              return (
+                <Pressable
+                  key={action.key}
+                  accessibilityRole="menuitem"
+                  accessibilityLabel={action.label}
+                  accessibilityHint={action.hint}
+                  onPress={() => {
+                    close();
+                    action.onPress();
+                  }}
+                  style={(state) => ({
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    borderRadius: 7,
+                    backgroundColor:
+                      state.pressed || (state as { hovered?: boolean }).hovered ? colors.surface1 : "transparent",
+                  })}
+                >
+                  <Icon name={action.icon} size={16} color={color} />
+                  <Text style={{ color, fontSize: 13, fontWeight: "500" }}>{action.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
+      </Modal>
     </View>
   );
 }
