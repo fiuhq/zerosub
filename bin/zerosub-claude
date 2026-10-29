@@ -1,0 +1,8 @@
+#!/bin/sh
+# claude on the account ZeroSub would give a brand-new agent right now, for tools Paseo doesn't launch
+# (point no-mistakes' agent_path_override.claude here). Stops, never falls back, when ZeroSub can't route.
+dir=$(cd "$(dirname "$0")/.." && pwd)
+bun=${ZEROSUB_BUN:-$HOME/.bun/bin/bun}
+exports=$("$bun" "$dir/server/launch.ts" claude) || exit 1
+eval "$exports"
+exec "${ZEROSUB_CLAUDE:-claude}" "$@"
