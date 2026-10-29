@@ -307,3 +307,39 @@ describe("switch early after a turn", () => {
     expect((await store.read()).sessions[AGENT]?.accountId).toBe(MAIN);
   });
 });
+
+describe("a reading past its reset", () => {
+  it("renews the sign-in, so an idle account that sat full is read again once it resets", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(NOW);
+      const store = new StateStore(join(root, "state.json"));
+      await store.update((draft) => Object.assign(draft, { accounts: [account(MAIN, "main")], defaults: { claude: MAIN, codex: null } }));
+      // Like Claude with an expired sign-in: nothing is read unless the CLI renews it first.
+      const renewals: boolean[] = [];
+      let signedIn = true;
+      const usage = async (_home: string | null, options: { renewLogin?: boolean } = {}): Promise<UsageRead> => {
+        renewals.push(Boolean(options.renewLogin));
+        const fetchedAt = new Date().toISOString();
+        if (!signedIn && !options.renewLogin) return { fetchedAt, windows: [], error: "Usage shows up after this account is next used.", cached: false, resets: null };
+        return { fetchedAt, windows: windows(0, signedIn ? 100 : 0), error: null, cached: false, resets: null };
+      };
+      const service = new Service(
+        everyFamily({ ...adapter({}, []), usage }),
+        store,
+        { resolve: async () => ({ claude: "claude" as const }) } as unknown as FamilyResolver,
+        {} as Reopener,
+      );
+      service.setPreferences(preferences.schema.parse({}));
+      await service.refreshUsage(MAIN, true);
+      signedIn = false;
+      vi.setSystemTime(NOW + 3_600_000);
+      await service.refreshUsage(MAIN, true);
+      vi.setSystemTime(NOW + 73 * 3_600_000);
+      await service.refreshUsage(MAIN, true);
+      expect(renewals).toEqual([false, false, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
