@@ -5,7 +5,7 @@ Use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot and OpenCode Go s
 - **Add accounts in the app.** Click **Add account** under Claude, ChatGPT, Kimi Code, Copilot or OpenCode Go and sign in on any device, including your phone. You don't need a terminal, environment variables or config files.
 - **Your existing CLI logins show up automatically.** Nothing changes until you add a second account.
 - **Pick an account per agent.** An account button in the message box shows which account each Claude or Codex agent uses. Tap it to switch.
-- **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the account with the most room left and carries on. New agents skip exhausted accounts.
+- **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the account whose spare quota resets soonest and carries on. New agents skip exhausted accounts.
 - **Accounts per project.** Pick the Paseo projects whose agents use an account (work projects on the work account, say). Agents in other projects stay off it.
 - **Switch early.** An agent whose turn ends on a nearly full account moves to one with room before its next turn, so it doesn't stop halfway through a task. New agents skip nearly full accounts too.
 - **Live usage.** Each account shows its own 5-hour and weekly usage and when they reset. Accounts in use refresh about every minute and after each turn, and a limit shows up the moment it hits.
@@ -59,7 +59,7 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - An account picked for some projects is set aside for them: agents in other projects never land on it automatically, unless no other account is left. When a project's account hits a limit, its agents move to an account no other project has.
    - Saving moves the projects' open agents straight away (busy ones after their turn).
 6. **Switch early** (under **Before the limit**) moves agents before they hit a limit at all:
-   - When an agent's turn ends, ZeroSub reads its account's usage again. If a 5-hour window is at least **80%** used, or a weekly one at least **95%**, the agent moves to the account with the most room before its next turn. Both lines can be set from 50 to 100; 100 turns that kind of window off. Weekly windows get the higher line because one turn barely moves them.
+   - When an agent's turn ends, ZeroSub reads its account's usage again. If a 5-hour window is at least **80%** used, or a weekly one at least **95%**, the agent moves to the first account in Up next with room to spare before its next turn. Both lines can be set from 50 to 100; 100 turns that kind of window off. Weekly windows get the higher line because one turn barely moves them.
    - It only moves onto an account at least 10 points below every line. A move costs the conversation its prompt cache on the new account, and the margin keeps agents from bouncing between two accounts that are both nearly full. When no account has that much room, the agent stays and the limit failover above takes over.
    - It acts only on a live reading from the last 10 minutes, never a cached or failed one, and leaves a window that refills in the next 10 minutes alone.
    - New agents that would follow the default onto a nearly full account start on one with room instead, and stay there.
@@ -112,7 +112,7 @@ ZeroSub tries these in order, and a timeline note says which one happened:
 
 1. **Use a banked reset**, if you turned on **Use banked resets when every account is out**.
 2. **Fork the chat to another provider**, if you turned on **When every account is out, fork the chat to another provider** (off by default). A stopped chat continues in a new agent on the first provider, in the order Claude, ChatGPT, Kimi Code, Copilot, OpenCode Go, that you have an account for, that Paseo can run here, and that has an account with room:
-   - The new agent opens in the same workspace with the conversation so far and goes straight back to work. If that conversation began as a hand-off itself, only the start and end of the earlier one are quoted. It uses the other provider's default model (for OpenCode Go, an `opencode-go/…` model, and OpenCode Go is skipped when OpenCode lists none) and its account with the most room left.
+   - The new agent opens in the same workspace with the conversation so far and goes straight back to work. If that conversation began as a hand-off itself, only the start and end of the earlier one are quoted. It uses the other provider's default model (for OpenCode Go, an `opencode-go/…` model, and OpenCode Go is skipped when OpenCode lists none) and its account whose spare quota resets soonest.
    - Its permission mode matches the original's level. Bypass becomes Full Access, and Accept File Edits becomes Default Permissions. Codex has no read-only or ask-first mode, so a Claude agent in Plan Mode or Always Ask isn't forked. ZeroSub never gives a fork more freedom than you gave the original.
    - The original agent stays as it was, and prompting it again while its provider is still out points to the same fork rather than starting another.
    - With the option off, a stopped agent's account button offers **Continue on ChatGPT (new agent)…** (or Claude) instead, with a confirmation.

@@ -1322,6 +1322,7 @@ export class Service {
       portable: this.adapters[family].portable,
       usageOf: (id) => this.usage.get(id),
       projectId: state.sessions[agentId]?.projectId,
+      early: this.early,
     })?.account.id;
   }
 

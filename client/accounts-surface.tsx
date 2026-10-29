@@ -77,8 +77,8 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
             ) : null}
           </View>
           <Text style={text.muted}>
-            Keep several {familyPhrase()} accounts signed in. Each agent uses one; before an account
-            hits its limit, agents move to the one whose spare quota runs out soonest and keep going.
+            Keep several {familyPhrase()} accounts signed in. Each agent uses one; when an account
+            runs out, agents move to the one whose spare quota runs out soonest and keep going.
           </Text>
         </View>
 
@@ -760,7 +760,7 @@ function AutomationSettings({ theme }: { theme: Theme }) {
         />
         <SettingsSwitch
           label="Spread new agents across accounts"
-          hint="New agents start on the account with the most room instead of the default."
+          hint="New agents start at the top of Up next instead of on the default."
           value={settings.values.balanceNewAgents}
           disabled={settings.saving}
           onValueChange={(balanceNewAgents) => save({ balanceNewAgents })}

@@ -58,7 +58,7 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
         <SettingsCard>
           <SettingsSwitch
             label="Switch accounts when one hits its limit"
-            hint="The agent moves to the top of Up next: the account whose spare quota resets soonest."
+            hint="The agent moves to the first account in Up next with room to spare: spare quota that resets soonest goes first."
             value={settings.values.autoSwitch}
             disabled={settings.saving}
             onValueChange={(autoSwitch) => save({ autoSwitch })}
@@ -119,7 +119,7 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
         <SettingsCard>
           <SettingsSwitch
             label="Spread new agents across accounts"
-            hint="New agents start on the account with the most room instead of the default."
+            hint="New agents start at the top of Up next instead of on the default."
             value={settings.values.balanceNewAgents}
             disabled={settings.saving}
             onValueChange={(balanceNewAgents) => save({ balanceNewAgents })}
