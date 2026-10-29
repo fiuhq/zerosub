@@ -1,7 +1,7 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon } from "@getpaseo/plugin/client/react-native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Modal, Platform, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Platform, Pressable, Text, useWindowDimensions, View } from "react-native";
 import { formatPercent, formatResetIn } from "../shared/format";
 import type { UsageWindow } from "../shared/model";
 
@@ -268,6 +268,10 @@ export function ActionsMenu({
   const overlay = useRef<View>(null);
   const picked = useRef<MenuAction | null>(null);
   const colors = theme.colors;
+  // Until the overlay has measured its own origin, take it to be the window's: exact on the web, where the Modal is
+  // fixed to the viewport (and where that measurement may never arrive), and corrected on native once it does.
+  const windowSize = useWindowDimensions();
+  const frame = root ?? { x: 0, y: 0, width: windowSize.width, height: windowSize.height };
   const close = () => setAnchor(null);
   const runPicked = () => {
     const action = picked.current;
@@ -299,7 +303,7 @@ export function ActionsMenu({
             onPress={close}
             style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0 }}
           />
-          {anchor && root ? (
+          {anchor ? (
             <View
               accessibilityRole="menu"
               accessibilityLabel={label}
@@ -308,13 +312,13 @@ export function ActionsMenu({
                 top: Math.max(
                   8,
                   Math.min(
-                    anchor.y - root.y + anchor.height + 4,
-                    root.height - 8 - (actions.length * MENU_ROW_HEIGHT + 14),
+                    anchor.y - frame.y + anchor.height + 4,
+                    frame.height - 8 - (actions.length * MENU_ROW_HEIGHT + 14),
                   ),
                 ),
                 right: Math.max(
                   8,
-                  Math.min(root.x + root.width - (anchor.x + anchor.width), root.width - 8 - MENU_WIDTH),
+                  Math.min(frame.x + frame.width - (anchor.x + anchor.width), frame.width - 8 - MENU_WIDTH),
                 ),
                 minWidth: MENU_WIDTH,
                 padding: 6,
