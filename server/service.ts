@@ -46,6 +46,7 @@ import { Reopener } from "./reopen";
 import { SwitchGuard } from "./switch-guard";
 import { loadReadings, mergeUsage, saveReadings, showLimit } from "./usage";
 import { chooseAccount, isLimited, isUsable, mostAvailable, nearlyFull, reservedElsewhere, roomyAccount, type EarlyLines } from "./routing";
+import { BurnTracker, turnHorizon } from "./burn";
 import {
   MAIN_ACCOUNT_ID,
   StateStore,
@@ -145,6 +146,10 @@ export class Service {
   private paseo: PaseoApi | null = null;
   private prefs: Preferences = DEFAULT_PREFERENCES;
   private readonly usage = new Map<string, Usage>();
+  /** Recent live readings per account, so switch early can see where a window is heading. */
+  private readonly burn = new BurnTracker();
+  /** When each agent's current turn started, so the next one's length can be guessed. */
+  private readonly turnStartedAt = new Map<string, number>();
   private readonly usageAttemptAt = new Map<string, number>();
   private readonly usageInFlight = new Map<string, Promise<void>>();
   private readonly identityCheckedAt = new Map<string, number>();
@@ -472,6 +477,7 @@ export class Service {
     this.attach(context.paseo);
     const family = (await this.families.resolve(context.paseo))[agent.provider];
     if (!family) return;
+    this.turnStartedAt.set(agent.id, Date.now());
     const accountId = this.runningOn(await this.store.read(), agent.id, family);
     if (accountId) this.activeAt.set(accountId, Date.now());
   }
@@ -483,6 +489,8 @@ export class Service {
     const adapter = this.adapters[family];
     const agentId = event.agent.id;
     const endedAt = Date.now();
+    const horizon = turnHorizon(this.turnStartedAt.get(agentId), endedAt);
+    this.turnStartedAt.delete(agentId);
     const accountId = this.runningOn(await this.store.read(), agentId, family);
     if (accountId) this.activeAt.set(accountId, endedAt);
     // A turn on a model billed elsewhere says nothing about this account.
@@ -503,7 +511,7 @@ export class Service {
       }
     }
     if (this.deferred.has(agentId)) await this.finishDeferred(context.paseo, agentId, family);
-    else if (accountId && event.outcome.kind === "completed") await this.switchEarly(context.paseo, agentId, family, accountId);
+    else if (accountId && event.outcome.kind === "completed") await this.switchEarly(context.paseo, agentId, family, accountId, horizon);
     // The turn just used the account: read its usage again as soon as the provider allows.
     if (accountId) void this.refreshUsage(accountId).catch(() => undefined);
   }
@@ -597,7 +605,7 @@ export class Service {
    * moves only conversations that can change accounts in place, only onto an account with room to
    * spare, and leaves an account chosen for this agent alone until it really runs out.
    */
-  private async switchEarly(paseo: PaseoApi, agentId: string, family: Family, accountId: string): Promise<void> {
+  private async switchEarly(paseo: PaseoApi, agentId: string, family: Family, accountId: string, horizonMs: number): Promise<void> {
     const lines = this.early;
     if (!lines || !this.adapters[family].portable || this.switching.has(agentId)) return;
     this.switching.add(agentId);
@@ -605,8 +613,13 @@ export class Service {
       // The turn just used the account: read it again, as soon as the provider allows, before deciding.
       await withTimeout(this.refreshUsage(accountId, true), 12_000);
       const now = Date.now();
-      const full = nearlyFull(this.usage.get(accountId), lines, now).sort((a, b) => b.usedPercent - a.usedPercent)[0];
+      // Judge where the account will be when the agent's next turn ends, not only where it is now:
+      // a busy account can climb from under its line to its limit within one turn.
+      const reading = this.usage.get(accountId);
+      const full = nearlyFull(this.burn.project(accountId, reading, horizonMs, now), lines, now).sort((a, b) => b.usedPercent - a.usedPercent)[0];
       if (!full) return;
+      const used = Math.round(reading?.windows.find((window) => window.id === full.id)?.usedPercent ?? full.usedPercent);
+      const heading = Math.round(full.usedPercent) > used ? `, heading for ${Math.round(full.usedPercent)}%` : "";
       const state = await this.store.read();
       const account = findAccount(state, accountId);
       if (!account || this.runningOn(state, agentId, family) !== accountId) return;
@@ -616,7 +629,7 @@ export class Service {
       await withTimeout(Promise.allSettled(others.map((other) => this.refreshUsage(other.id, true))), 12_000);
       const next = roomyAccount(state, family, (id) => this.usage.get(id), lines, Date.now(), new Set([...this.reserved(state, agentId), accountId]));
       if (!next) return;
-      console.log(`[ZeroSub] ${account.label} is at ${Math.round(full.usedPercent)}% of its ${full.label} limit; moving ${agentId} to ${next.label} early`);
+      console.log(`[ZeroSub] ${account.label} is at ${used}% of its ${full.label} limit${heading}; moving ${agentId} to ${next.label} early`);
       await this.store.update((draft) => {
         draft.bindings[agentId] = { accountId: next.id, source: "auto", at: new Date(now).toISOString() };
       });
@@ -631,7 +644,7 @@ export class Service {
         continuedIn: null,
         toFamily: null,
         outcome: "switched",
-        detail: `at ${Math.round(full.usedPercent)}% of its ${full.label} limit`,
+        detail: `at ${used}% of its ${full.label} limit${heading}`,
         at: new Date(now).toISOString(),
       };
       const outcome = await this.reopenAgent(paseo, agentId, row, true);
@@ -1497,8 +1510,10 @@ export class Service {
 
   /** Records a reading and saves the readings shortly after, so a restart shows them straight away. */
   private setUsage(accountId: string, usage: Usage | null): void {
-    if (usage) this.usage.set(accountId, usage);
-    else this.usage.delete(accountId);
+    if (usage) {
+      this.usage.set(accountId, usage);
+      this.burn.note(accountId, usage);
+    } else this.usage.delete(accountId);
     if (this.usageSave) return;
     this.usageSave = setTimeout(() => {
       this.usageSave = null;
