@@ -4,7 +4,7 @@ import type {
   PluginButtonRegistration,
   PluginClientContext,
 } from "@getpaseo/plugin/client";
-import { formatPercent, peakUsage, shortLabel } from "../shared/format";
+import { formatCredits, formatPercent, peakUsage, shortLabel } from "../shared/format";
 import { FAMILY_LABEL, fallbackFamilies, type AccountView, type Family, type StateView } from "../shared/model";
 import { setAgentAccount } from "../shared/rpc";
 import { forkPopover } from "./fork-confirm";
@@ -204,6 +204,13 @@ function buttonFor(
     });
   }
   if (wayOut.length > 0) items.unshift(...wayOut, { kind: "separator", id: "way-out-divider" });
+  if (route?.selectionReason === "weekly_reset") {
+    items.push({
+      kind: "item", id: "selection-reason",
+      title: "Started here: weekly reset was near",
+      icon: "Info", disabled: true, behavior: { kind: "action", onPress() {} },
+    });
+  }
   items.push({ kind: "separator", id: "manage-divider" });
   if (route?.pinned && movable) {
     const fallback = accounts.find((account) => account.isDefault);
@@ -242,7 +249,9 @@ function menuTitle(account: AccountView): string {
   if (account.status === "disabled") return `${account.label} — disabled`;
   if (account.status === "limited") return `${account.label} — limit reached`;
   const peak = account.usage ? peakUsage(account.usage.windows) : null;
-  return peak ? `${account.label} — ${formatPercent(peak.usedPercent)} used` : account.label;
+  if (!peak) return account.label;
+  const credits = account.usage?.credits;
+  return `${account.label} — ${formatPercent(peak.usedPercent)} used${credits ? ` · ${formatCredits(credits)}` : ""}`;
 }
 
 function menuKey(button: PluginButton): string {

@@ -29,7 +29,7 @@ function account(partial: Partial<StoredAccount> & Pick<StoredAccount, "id">): S
 }
 
 function usage(percent: number): Usage {
-  return { fetchedAt: "2026-10-29T04:29:00Z", windows: [{ id: "five_hour", label: "5-hour", usedPercent: percent, resetsAt: null }], error: null, cached: false, resets: null };
+  return { fetchedAt: "2026-10-29T04:29:00Z", windows: [{ id: "five_hour", label: "5-hour", usedPercent: percent, resetsAt: null }], error: null, cached: false, resets: null, credits: null };
 }
 
 const state = (accounts: StoredAccount[], patch: Partial<StoredState> = {}): StoredState => ({ ...emptyState(), accounts, ...patch });

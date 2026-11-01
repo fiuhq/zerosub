@@ -8,7 +8,7 @@ Use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot and OpenCode Go s
 - **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the top of **Up next**, the list on the Accounts screen that puts the account whose spare quota resets soonest first, and carries on. New agents skip exhausted accounts.
 - **Accounts per project.** Pick the Paseo projects whose agents use an account (work projects on the work account, say). Agents in other projects stay off it.
 - **Switch early.** An agent whose turn ends on a nearly full account moves to one with room before its next turn, so it doesn't stop halfway through a task. New agents skip nearly full accounts too.
-- **Live usage.** Each account shows its own 5-hour and weekly usage and when they reset. Accounts in use refresh about every minute and after each turn, and a limit shows up the moment it hits.
+- **Live usage.** Each account shows its own 5-hour and weekly usage and when they reset, plus any ChatGPT credits. Accounts in use refresh about every minute and after each turn, and a limit shows up the moment it hits.
 - **Banked resets.** If a provider has banked limit resets on an account, you can use one from the account card or the agent's account button.
 - **Set an account aside.** Disable an account for a while and its agents move to your other accounts, then come back when you enable it again.
 - **Several hosts.** Each Paseo host keeps its own accounts, and the Accounts screen says which host you're looking at.
@@ -38,6 +38,7 @@ Then open **Accounts (ZeroSub)** in the sidebar.
 2. Click **Add account** under a provider, then **Open sign-in page** (for Kimi Code, Copilot and OpenCode Go, see [Kimi Code](#kimi-code), [GitHub Copilot](#github-copilot) and [OpenCode Go](#opencode-go)), and sign in with the other account.
    - In a browser on the host's own computer, the page finishes by itself.
    - Anywhere else, choose **Use a code instead**. For Claude, paste the code shown after sign-in. For ChatGPT, type the code shown in Paseo on the page. Phones, and hosts without a desktop (servers, containers, daemons started over SSH), start with the code.
+   - Members of the same ChatGPT Team or Business workspace can each be added; ZeroSub tells them apart by email. If Codex doesn't return one, ZeroSub won't add a second account from that workspace or sign one of its members back in.
 3. Choose which account agents use:
    - **Make default** (in a card's ⋯ menu): agents that follow the default use it. New agents start at the top of Up next while **Spread new agents across accounts** is on (the default), and on the default when it's off. Open Claude agents switch right away, busy ones after their turn.
      - To leave open agents where they are, turn off **Move open agents when the default changes** (in Accounts, or **Settings → Plugins → zerosub → ZeroSub preferences**). Each open agent that follows the default then stays pinned to the account it's using, even after it reopens, unless that account is signed out, disabled or at its limit. Agents that aren't open at the time, and new agents when **Spread new agents across accounts** is off, use the new default.
@@ -51,7 +52,7 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - Paseo 0.13 and later no longer send the finished turn to plugins, so ZeroSub reads that turn from the agent's timeline instead.
    - A short note in the agent's timeline says what happened.
    - As a safety stop, one agent changes accounts at most 4 times in 10 minutes. If it hits that, its timeline says so; pick an account from its account button to carry on.
-   - An exhausted account is skipped until it resets. If you know it has room again sooner, for example after upgrading or buying credits, choose **Mark as available again** from its card's ⋯ menu.
+   - An exhausted account is skipped until it resets. If you know it has room again sooner, for example after upgrading or buying credits, choose **Mark as available again** from its card's ⋯ menu. For ChatGPT credits, see [ChatGPT credits](#chatgpt-credits).
 5. **Accounts per project**: choose **Projects** from an account card's ⋯ menu and pick the Paseo projects whose agents should use it.
    - It follows Paseo's own projects, so every workspace and worktree of a project counts, wherever its folder lives.
    - A project has one account per provider. Picking a project that already uses another account moves it here.
@@ -64,6 +65,10 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - It acts only on a live reading from the last 10 minutes, never a cached or failed one, and leaves a window that refills in the next 10 minutes alone.
    - New agents that would follow the default onto a nearly full account start on one with room instead, and stay there.
    - It leaves an account you chose for an agent alone until that account really runs out. ChatGPT conversations with history can't change accounts, so only new ChatGPT agents are affected.
+
+### Choose accounts for new agents
+
+Turn on **Spread new agents across accounts** to select an account from its usage. For ChatGPT agents, ZeroSub prefers an account when its weekly limit resets within one day and both limits have at least 20% left. Usage for every available account must be complete and less than 30 minutes old. Otherwise, new agents start at the top of **Up next**, and so do Claude agents. Accounts set aside for other projects are never picked this way. When a near weekly reset was the reason, the agent's account menu says **Started here: weekly reset was near**. Existing agents stay on their accounts.
 
 ### Claude vs. ChatGPT when switching mid-conversation
 
@@ -105,6 +110,14 @@ Some plans come with banked limit resets: ChatGPT's reset credits, and Claude Co
 - **ChatGPT** uses Codex's own reset-credit API, the same one as `/usage` → reset in the Codex CLI. It never spends a credit while nothing is used up.
 - **Claude** uses Claude Code's limit-reset endpoint. Anthropic decides which accounts get resets; so far it reports the tested accounts as not eligible, so the button may not appear for Claude. It shows up by itself once an account has a reset.
 - **Use banked resets when every account is out** (off by default) spends one automatically, but only when every account of that provider is at its limit and the provider confirms the limit at that moment.
+
+### ChatGPT credits
+
+A ChatGPT account can also have prepaid ChatGPT credits, which Codex spends once the account reaches its limit. They aren't the reset credits above. The card shows them under the usage bars, for example "57,714 ChatGPT credits left", and an agent's account button shows them next to the account's usage.
+
+- By default, an account at its limit is skipped until it resets, credits or not, so new agents use the free room on your other accounts first. That room is lost at each reset; credits aren't. **Mark as available again** only lasts until the next usage reading, which still shows the limit reached.
+- **Use ChatGPT credits when a limit is reached** (off by default; in Accounts, or **Settings → Plugins → zerosub → ZeroSub preferences**) keeps an account with credits in use at its limit. New agents may then spend paid credits even while another account still has room.
+- Even with it on, a limit an agent actually ran into stays until it resets: Codex stopped that agent, so the credits didn't cover it.
 
 ### When every account of a provider is out
 
@@ -149,7 +162,7 @@ ZeroSub never implements OAuth itself and never copies credentials between accou
 ## Privacy and security
 
 - Credentials stay in the CLIs' own stores. ZeroSub's registry (`$PASEO_HOME/zerosub/state.json`) holds account names, emails, plans, which agent uses which account, which Paseo projects use which account, and continuation links with timeline positions. Handoff text stays in the agents' conversation histories; it isn't copied into the registry.
-- To show Claude usage, ZeroSub reads each account's current access token and calls Anthropic's usage endpoint, the same way Paseo's built-in usage display and `/usage` do. It never logs or stores tokens and never refreshes them itself. When you refresh usage (the ↻ button beside the title), use a reset, or a reading has passed its reset time, and a token has expired, it runs `claude -p /usage` so Claude Code renews its own sign-in. Codex usage comes from `codex app-server`.
+- To show Claude usage, ZeroSub reads each account's current access token and calls Anthropic's usage endpoint, the same way Paseo's built-in usage display and `/usage` do. It never logs or stores tokens and never refreshes them itself. When you refresh usage (the ↻ button beside the title) or use a reset and a token has expired, it runs `claude -p /usage` so Claude Code renews its own sign-in. In the background it does the same at most every 30 minutes per account, and only for a reading that has passed its reset time or an account at its 5-hour or weekly limit. Codex usage comes from `codex app-server`.
 - Using a banked reset calls the provider's own reset endpoint with that account's sign-in, and only after you confirm (or turn on automatic use).
 - Removing an account moves its agents to the default account, then signs it out (`claude auth logout` / `codex` logout) and deletes its home. This happens once no agent is mid-turn on it. Abandoned sign-ins are cleaned up the same way.
 - An account that still has ChatGPT conversations on it can't be removed until you archive them or continue them elsewhere, because they can't move.
@@ -159,7 +172,7 @@ ZeroSub never implements OAuth itself and never copies credentials between accou
 
 - **MCP servers that use OAuth** (Linear, Notion, …) store their tokens per Claude account, so sign in to them once on each account.
 - **Shared settings apply to every account.** If `~/.claude/settings.json` sets an `apiKeyHelper` or API-key `env`, every account uses that key instead of its subscription.
-- **Usage for an idle Claude account** shows the last reading until the account is used again, you refresh usage, or a window in it passes its reset time. Anthropic rate-limits its usage endpoint (Claude Code and Paseo read it too), so a reading can be a few minutes old; the card then says when it was taken. Readings are saved in `$PASEO_HOME/zerosub/usage.json`, so they survive restarts.
+- **Usage for an idle Claude account** shows the last reading until the account is used again or you refresh usage. If a window in it has passed its reset time, or the account is at its limit, ZeroSub also renews the sign-in in the background to read it again, at most every 30 minutes, so an early reset or one used on another machine shows up too. Anthropic rate-limits its usage endpoint (Claude Code and Paseo read it too), so a reading can be a few minutes old; the card then says when it was taken. Readings are saved in `$PASEO_HOME/zerosub/usage.json`, so they survive restarts.
 - **Password-protected daemons:** `paseo agent reload` can't authenticate. Agents then switch the next time their session starts, not immediately, and their timeline note says so.
 - **Imported Codex threads** (`paseo agent import`) are assigned to your CLI login, since that's where standalone Codex sessions come from.
 - **ChatGPT device-code sign-in** has to be enabled in ChatGPT → Settings → Security. The browser option works from a browser on the host's own computer.

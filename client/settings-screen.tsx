@@ -119,7 +119,7 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
         <SettingsCard>
           <SettingsSwitch
             label="Spread new agents across accounts"
-            hint="New agents start at the top of Up next instead of on the default."
+            hint="New ChatGPT agents prefer a weekly reset within one day when both limits have at least 20% left. Otherwise, new agents start at the top of Up next instead of on the default."
             value={settings.values.balanceNewAgents}
             disabled={settings.saving}
             onValueChange={(balanceNewAgents) => save({ balanceNewAgents })}
@@ -130,6 +130,13 @@ export function PreferencesScreen({ theme, host, onOpenAccounts }: PluginSurface
             value={settings.values.autoRedeem}
             disabled={settings.saving || !settings.values.autoSwitch}
             onValueChange={(autoRedeem) => save({ autoRedeem })}
+          />
+          <SettingsSwitch
+            label="Use ChatGPT credits when a limit is reached"
+            hint="A ChatGPT account at its limit stays in use while it has credits, so new agents may spend paid credits even while another account still has room."
+            value={settings.values.useCredits}
+            disabled={settings.saving}
+            onValueChange={(useCredits) => save({ useCredits })}
           />
           <SettingsSwitch
             label="When every account is out, fork the chat to another provider"

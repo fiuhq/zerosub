@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { FAMILY_PORTABLE, type LoginMethod, type ResetOffer, type Usage, type UsageWindow } from "../shared/model";
+import { FAMILY_PORTABLE, type Credits, type LoginMethod, type ResetOffer, type Usage, type UsageWindow } from "../shared/model";
 import {
   ProgressEmitter,
   spawnEnv,
@@ -282,6 +282,7 @@ export class CodexAdapter implements FamilyAdapter {
             error: signedIn ? "Signed in with an API key, not a ChatGPT plan." : "Not signed in.",
             cached: false,
             resets: null,
+            credits: null,
           },
         };
       }
@@ -302,9 +303,10 @@ export class CodexAdapter implements FamilyAdapter {
           error: null,
           cached: false,
           resets: parseResetCredits(limits.rateLimitResetCredits),
+          credits: parseCredits(limits.rateLimits),
         };
       } catch (error) {
-        usage = { fetchedAt, windows: [], error: error instanceof Error ? error.message : String(error), cached: false, resets: null };
+        usage = { fetchedAt, windows: [], error: error instanceof Error ? error.message : String(error), cached: false, resets: null, credits: null };
       }
       return {
         identity: {
@@ -312,9 +314,11 @@ export class CodexAdapter implements FamilyAdapter {
           email,
           plan,
           organization: null,
-          // The ChatGPT account (workspace) ID tells a personal plan from a Team workspace on the same
-          // email; without it, fall back to email plus plan so those two still stay distinct.
-          identity: accountId ? `chatgpt|${accountId}` : email ? `chatgpt-email|${email.toLowerCase()}|${plan ?? "unknown"}` : null,
+          // A workspace can have several members. Include the email returned by account/read so
+          // each member is distinct while one email's personal and Team workspaces stay separate.
+          identity: accountId
+            ? `chatgpt|${accountId}${email?.trim() ? `|${email.trim().toLowerCase()}` : ""}`
+            : email ? `chatgpt-email|${email.trim().toLowerCase()}|${plan ?? "unknown"}` : null,
         },
         usage,
       };
@@ -451,9 +455,13 @@ function friendlyCodexError(message: string | null): string {
   return message;
 }
 
+/** How long a ChatGPT plan's two windows are, in minutes, as Codex reports them in `windowDurationMins`. */
+export const FIVE_HOUR_MINUTES = 300;
+export const WEEK_MINUTES = 10_080;
+
 function windowLabel(minutes: number | null): string {
   if (!minutes) return "Usage";
-  if (minutes === 10_080) return "Weekly";
+  if (minutes === WEEK_MINUTES) return "Weekly";
   if (minutes % 1_440 === 0) return `${minutes / 1_440}-day`;
   if (minutes % 60 === 0) return `${minutes / 60}-hour`;
   return `${minutes}-minute`;
@@ -472,9 +480,28 @@ export function parseRateLimits(snapshot: unknown): UsageWindow[] {
       label: windowLabel(minutes),
       usedPercent: window.usedPercent,
       resetsAt: typeof window.resetsAt === "number" ? new Date(window.resetsAt * 1000).toISOString() : null,
+      minutes,
     });
   }
   return windows;
+}
+
+/**
+ * Prepaid ChatGPT credits, from `rateLimits.credits` (`balance` is a decimal string on the wire).
+ * Codex bills them once the plan's windows are used up, so `null` means there are none to fall back on,
+ * as does a balance at or below zero.
+ */
+export function parseCredits(snapshot: unknown): Credits | null {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const record = snapshot as Json;
+  if (record.spendControlReached === true) return null;
+  const credits = record.credits as { hasCredits?: unknown; unlimited?: unknown; balance?: unknown } | null;
+  if (!credits || typeof credits !== "object") return null;
+  const unlimited = credits.unlimited === true;
+  if (!unlimited && credits.hasCredits !== true) return null;
+  const balance = typeof credits.balance === "string" || typeof credits.balance === "number" ? Number(credits.balance) : Number.NaN;
+  if (!unlimited && balance <= 0) return null;
+  return { balance: Number.isFinite(balance) ? balance : null, unlimited };
 }
 
 /** Banked reset credits, from `rateLimitResetCredits` (`availableCount` is a JSON number on the wire). */

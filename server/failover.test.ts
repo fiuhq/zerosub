@@ -100,6 +100,8 @@ interface SetUpOptions {
   detectLimit?: FamilyAdapter["detectLimit"];
   /** The tail of the agent's timeline as Paseo returns it when asked. */
   recent?: Parameters<typeof fakePaseo>[0];
+  /** What every usage reading returns. */
+  usage?: () => UsageRead;
 }
 
 async function setUp(state: Partial<StoredState>, hit: () => LimitHit, options: SetUpOptions = {}) {
@@ -125,7 +127,11 @@ async function setUp(state: Partial<StoredState>, hit: () => LimitHit, options: 
     },
   };
   const families = { resolve: async () => ({ claude: "claude" as const }) };
-  const claude = { ...claudeAdapter(hit), ...(options.detectLimit ? { detectLimit: options.detectLimit } : {}) };
+  const claude = {
+    ...claudeAdapter(hit),
+    ...(options.detectLimit ? { detectLimit: options.detectLimit } : {}),
+    ...(options.usage ? { usage: async () => options.usage!() } : {}),
+  };
   const service = new Service(
     everyFamily(claudeAdapter(hit), { claude }),
     store,
@@ -607,6 +613,106 @@ describe("disabling an account", () => {
   });
 });
 
+describe("usage readings", () => {
+  const CREDITS = { balance: 57714.93, unlimited: false };
+  const USE_CREDITS = preferences.schema.parse({ useCredits: true });
+  const NEW_AGENT = "agent-new";
+  const full = (credits: UsageRead["credits"]) => (): UsageRead => ({
+    fetchedAt: new Date().toISOString(),
+    windows: [{ id: "primary", label: "Weekly", usedPercent: 100, resetsAt: inFuture() }],
+    error: null,
+    cached: false,
+    resets: null,
+    credits,
+  });
+  const state = (limit: Partial<StoredAccount> = {}) => ({
+    accounts: [{ ...account(MAIN, "marketing", "main"), ...limit }, account(HELLO, "hello", "managed")] as never,
+    defaults: { claude: MAIN, codex: null },
+  });
+  const limitedUntil = async (store: StateStore) => (await store.read()).accounts.find((a) => a.id === MAIN)?.limitedUntil ?? null;
+  const unused = () => ({ kind: "window" as const, resetsAt: inFuture(), message: "" });
+  /** Dates the account's limit an hour back, so usage readings may second-guess it. */
+  const settle = (store: StateStore) =>
+    store.update((draft) => {
+      const main = draft.accounts.find((a) => a.id === MAIN);
+      if (main) main.limitedAt = new Date(Date.now() - 60 * 60_000).toISOString();
+    });
+  /** The account a brand-new agent's session opens on. */
+  const newAgentOpensOn = async (service: Service, store: StateStore, paseo: unknown) => {
+    await service.onSessionOpen(
+      { agentId: NEW_AGENT, provider: "claude", reason: "create", purpose: "interactive", env: {} } as never,
+      { paseo } as never,
+    );
+    return (await store.read()).sessions[NEW_AGENT]?.accountId;
+  };
+
+  it("takes a full window without credits for a limit, whatever the setting", async () => {
+    for (const prefs of [preferences.schema.parse({}), USE_CREDITS]) {
+      const { service, store } = await setUp(state(), unused, { usage: full(null) });
+      service.setPreferences(prefs);
+      await service.refreshUsage(MAIN, true);
+      expect(await limitedUntil(store)).not.toBeNull();
+    }
+  });
+
+  it("still takes a full window for a limit while credits are left, so new agents start elsewhere", async () => {
+    const { service, store, paseo } = await setUp(state(), unused, { usage: full(CREDITS) });
+    await service.refreshUsage(MAIN, true);
+    expect(await limitedUntil(store)).not.toBeNull();
+    expect(await newAgentOpensOn(service, store, paseo)).toBe(HELLO);
+  });
+
+  it("keeps an account going on its credits when told to use them", async () => {
+    const { service, store, paseo } = await setUp(state(), unused, { usage: full(CREDITS) });
+    // New agents follow the default here: the fork's default spreads them by Up next, which ranks a full account last.
+    service.setPreferences(preferences.schema.parse({ useCredits: true, balanceNewAgents: false }));
+    await service.refreshUsage(MAIN, true);
+    expect(await limitedUntil(store)).toBeNull();
+    expect(await newAgentOpensOn(service, store, paseo)).toBe(MAIN);
+  });
+
+  it("clears a limit a reading found once told to use the credits", async () => {
+    const { service, store } = await setUp(state(), unused, { usage: full({ balance: null, unlimited: true }) });
+    await service.refreshUsage(MAIN, true);
+    await settle(store);
+    await service.refreshUsage(MAIN, true);
+    expect(await limitedUntil(store)).not.toBeNull(); // not while the setting is off
+
+    service.setPreferences(USE_CREDITS);
+    await service.refreshUsage(MAIN, true);
+    expect(await limitedUntil(store)).toBeNull();
+  });
+
+  it("leaves a limit a turn ran into until it resets, credits or not", async () => {
+    // The provider stopped the turn, so the credits didn't cover it: clearing the limit would only send new agents back.
+    const { service, store, limitTurn } = await setUp(
+      state(),
+      () => ({ kind: "window", resetsAt: inFuture(), message: "You've hit your usage limit" }),
+      { usage: full(CREDITS) },
+    );
+    service.setPreferences(USE_CREDITS);
+    await limitTurn();
+    await settle(store);
+    await service.refreshUsage(MAIN, true);
+    expect(await limitedUntil(store)).not.toBeNull();
+  });
+
+  it("takes a limit saved without its source for a turn's", async () => {
+    const { service, store } = await setUp(state({ limitedUntil: inFuture(), limitKind: "window" }), unused, { usage: full(CREDITS) });
+    service.setPreferences(USE_CREDITS);
+    await settle(store);
+    await service.refreshUsage(MAIN, true);
+    expect(await limitedUntil(store)).not.toBeNull();
+  });
+
+  it("stores a reading that leaves credits out as having none", async () => {
+    const { service, paseo } = await setUp(state(), unused);
+    await service.refreshUsage(MAIN, true);
+    const shown = (await service.view(paseo as never)).accounts.find((a) => a.id === MAIN);
+    expect(shown?.usage?.credits).toBeNull();
+  });
+});
+
 describe("changing the default account", () => {
   const openedAt = "2026-09-23T07:00:00.000Z";
   const stateWithLiveAgent = () => ({
@@ -965,5 +1071,206 @@ describe("changing the default account", () => {
     expect(bindings.thread).toMatchObject({ accountId: CODEX_MAIN, source: "thread" });
     expect(bindings.archived).toMatchObject({ accountId: CODEX_MAIN, source: "thread" });
     expect(reopened).toEqual([]);
+  });
+});
+
+describe("a reading past its reset", () => {
+  it("renews the sign-in, so an idle account that sat full is read again once it resets", async () => {
+    const NOW = Date.parse("2026-10-24T12:00:00Z");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(NOW);
+      const store = new StateStore(join(root, "state.json"));
+      await store.update((draft) => Object.assign(draft, { accounts: [account(MAIN, "main", "main")], defaults: { claude: MAIN, codex: null } }));
+      const windows = (weekly: number) => [{ id: "seven_day", label: "Weekly", usedPercent: weekly, resetsAt: new Date(NOW + 72 * 3_600_000).toISOString() }];
+      // Like Claude with an expired sign-in: nothing is read unless the CLI renews it first.
+      const renewals: boolean[] = [];
+      let signedIn = true;
+      const usage = async (_home: string | null, options: { renewLogin?: boolean } = {}): Promise<UsageRead> => {
+        renewals.push(Boolean(options.renewLogin));
+        const fetchedAt = new Date().toISOString();
+        if (!signedIn && !options.renewLogin) return { fetchedAt, windows: [], error: "Usage shows up after this account is next used.", cached: false, resets: null };
+        return { fetchedAt, windows: windows(signedIn ? 100 : 0), error: null, cached: false, resets: null };
+      };
+      const claude = { ...claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), usage };
+      const service = new Service(
+        everyFamily(claude, { codex: { ...claude, family: "codex", portable: false } as FamilyAdapter }),
+        store,
+        { resolve: async () => ({ claude: "claude" as const }) } as unknown as FamilyResolver,
+        { locate: async () => "/usr/local/bin/paseo" } as unknown as Reopener,
+      );
+      service.setPreferences(preferences.schema.parse({}));
+      await service.refreshUsage(MAIN, true);
+      signedIn = false;
+      vi.setSystemTime(NOW + 3_600_000);
+      await service.refreshUsage(MAIN, true);
+      vi.setSystemTime(NOW + 73 * 3_600_000);
+      await service.refreshUsage(MAIN, true);
+      expect(renewals).toEqual([false, false, true]);
+      // The renewed reading replaces the stale one, so the card and Up next see the reset.
+      const shown = (await service.view(fakePaseo().paseo as never)).accounts.find((entry) => entry.id === MAIN)?.usage;
+      expect(shown?.error).toBeNull();
+      expect(shown?.windows.map((window) => window.usedPercent)).toEqual([0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("renewing an expired sign-in in the background", () => {
+  const NOW = Date.parse("2026-10-24T12:00:00Z");
+  const MINUTE = 60_000;
+  const minutesIn = () => (Date.now() - NOW) / MINUTE;
+  const fiveHour = (usedPercent: number, resetsAt: number) => ({ id: "five_hour", label: "5-hour", usedPercent, resetsAt: new Date(resetsAt).toISOString() });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A service whose one account is the Claude CLI login, read through `usage`. */
+  async function setUpAccount(usage: FamilyAdapter["usage"], patch: Partial<StoredAccount> = {}) {
+    const store = new StateStore(join(root, "state.json"));
+    await store.update((draft) =>
+      Object.assign(draft, { accounts: [{ ...account(MAIN, "main", "main"), ...patch }], defaults: { claude: MAIN, codex: null } }),
+    );
+    const claude = { ...claudeAdapter(() => ({ kind: "window", resetsAt: null, message: "" })), usage };
+    const service = new Service(
+      everyFamily(claude, { codex: { ...claude, family: "codex", portable: false } as FamilyAdapter }),
+      store,
+      { resolve: async () => ({ claude: "claude" as const }) } as unknown as FamilyResolver,
+      { locate: async () => "/usr/local/bin/paseo" } as unknown as Reopener,
+    );
+    service.setPreferences(preferences.schema.parse({}));
+    return { service, store };
+  }
+
+  /**
+   * An account read full two hours before NOW, in a 5-hour window that reset an hour before NOW.
+   * Its sign-in has expired since, and renewing it never works (revoked, offline, or `claude`
+   * missing), so the reading stays past its reset. `reads` and `asked` are the minutes after NOW at
+   * which it was read, and at which a read asked to renew it.
+   */
+  async function setUpPastReset(patch: Partial<StoredAccount> = {}) {
+    let expired = false;
+    const reads: number[] = [];
+    const asked: number[] = [];
+    const { service, store } = await setUpAccount(async (_home, options = {}) => {
+      const fetchedAt = new Date().toISOString();
+      if (!expired) return { fetchedAt, windows: [fiveHour(100, NOW - 60 * MINUTE)], error: null, cached: false, resets: null };
+      reads.push(minutesIn());
+      if (options.renewLogin) asked.push(minutesIn());
+      return { fetchedAt, windows: [], error: "Usage shows up after this account is next used.", cached: false, resets: null };
+    }, patch);
+    vi.setSystemTime(NOW - 120 * MINUTE);
+    await service.refreshUsage(MAIN);
+    expired = true;
+    return { service, store, reads, asked };
+  }
+
+  /** A read nobody asked to renew the sign-in for, like the upkeep tick's, `minute` minutes after NOW. */
+  async function readAt(service: Service, minute: number) {
+    vi.setSystemTime(NOW + minute * MINUTE);
+    await service.refreshUsage(MAIN);
+  }
+
+  it("asks to renew at most every 30 minutes when renewing never works", async () => {
+    const { service, reads, asked } = await setUpPastReset();
+    // The default account is read every 5 minutes.
+    const minutes = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
+    for (const minute of minutes) await readAt(service, minute);
+    expect(reads).toEqual(minutes);
+    expect(asked).toEqual([0, 30, 60]);
+  });
+
+  it("doesn't renew a disabled account's sign-in", async () => {
+    const { service, store, asked } = await setUpPastReset({ disabled: true });
+    for (const minute of [0, 20, 40, 60]) await readAt(service, minute);
+    expect(asked).toEqual([]);
+    // Enabled again, the next read renews it.
+    await store.update((draft) => {
+      draft.accounts[0]!.disabled = false;
+    });
+    await readAt(service, 65);
+    expect(asked).toEqual([65]);
+  });
+
+  it("renews a window-limited account with no live reading, so a reset used elsewhere lifts the limit", async () => {
+    // The 5-hour window filled 10 minutes before NOW and resets 4 hours after it. The sign-in has
+    // expired since, so reads only get Claude Code's cached copy, older than the last live reading,
+    // until one renews it. By then a reset used on another machine has emptied the window.
+    const resetsAt = NOW + 240 * MINUTE;
+    let fresh = true;
+    let used = 100;
+    const asked: number[] = [];
+    const { service, store } = await setUpAccount(async (_home, options = {}) => {
+      if (options.renewLogin) {
+        asked.push(minutesIn());
+        fresh = true;
+      }
+      if (!fresh) return { fetchedAt: new Date(NOW - 15 * MINUTE).toISOString(), windows: [fiveHour(100, resetsAt)], error: null, cached: true, resets: null };
+      return { fetchedAt: new Date().toISOString(), windows: [fiveHour(used, resetsAt)], error: null, cached: false, resets: null };
+    });
+    const limitedUntil = async () => (await store.read()).accounts[0]!.limitedUntil;
+
+    await readAt(service, -10); // full, so the reading records the window limit
+    expect(await limitedUntil()).not.toBeNull();
+    fresh = false;
+    await readAt(service, 0); // only the cached copy
+    used = 0;
+    await readAt(service, 1); // renews and finds room, but a limit 11 minutes old is still trusted (LIMIT_TRUST_MS)
+    expect(await limitedUntil()).not.toBeNull();
+    await readAt(service, 6); // live without renewing now, and the limit is old enough to lift
+    expect(await limitedUntil()).toBeNull();
+    expect(asked).toEqual([1]);
+  });
+
+  it("still renews on every explicit refresh (↻)", async () => {
+    const { service, asked } = await setUpPastReset();
+    const paseo = fakePaseo().paseo as never;
+    await readAt(service, 0);
+    for (const minute of [1, 2]) {
+      vi.setSystemTime(NOW + minute * MINUTE);
+      await service.view(paseo, true);
+    }
+    // An explicit refresh counts as an attempt too, so the next background renewal waits 30 minutes from it.
+    await readAt(service, 30);
+    await readAt(service, 32);
+    expect(asked).toEqual([0, 1, 2, 32]);
+  });
+});
+
+describe("the account button's reason row", () => {
+  it("names a near weekly reset as why an agent started on its account, only while it's still there", async () => {
+    const { service, store } = await setUp(
+      {
+        accounts: [account(MAIN, "marketing", "main"), account(HELLO, "hello", "managed")] as never,
+        defaults: { claude: MAIN, codex: null },
+        bindings: { [AGENT]: { accountId: HELLO, source: "balance", at: new Date().toISOString(), selectionReason: "headroom" } },
+        sessions: {},
+      },
+      () => ({ kind: "window", resetsAt: inFuture(), message: "" }),
+    );
+    const paseo = fakePaseo().paseo as never;
+    const route = async () => (await service.view(paseo)).agents.find((entry) => entry.agentId === AGENT);
+
+    // Most room left is how balancing always picks, so it gets no row.
+    expect((await route())?.accountId).toBe(HELLO);
+    expect((await route())?.selectionReason).toBeUndefined();
+
+    await store.update((draft) => {
+      draft.bindings[AGENT]!.selectionReason = "weekly_reset";
+    });
+    expect(await route()).toMatchObject({ accountId: HELLO, selectionReason: "weekly_reset" });
+
+    // Moved off it for now, so the account the menu shows wasn't picked for its reset.
+    await store.update((draft) => {
+      draft.accounts.find((entry) => entry.id === HELLO)!.limitedUntil = inFuture();
+    });
+    expect((await route())?.accountId).toBe(MAIN);
+    expect((await route())?.selectionReason).toBeUndefined();
   });
 });
