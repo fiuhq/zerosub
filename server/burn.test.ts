@@ -12,7 +12,7 @@ function reading(at: number, fiveHour: number, weekly: number, fiveReset = RESET
     { id: "five_hour", label: "5-hour", usedPercent: fiveHour, resetsAt: fiveReset },
     { id: "seven_day", label: "Weekly", usedPercent: weekly, resetsAt: RESET_WEEK },
   ];
-  return { fetchedAt: new Date(at).toISOString(), windows, error: null, cached: false, resets: null, ...patch };
+  return { fetchedAt: new Date(at).toISOString(), windows, error: null, cached: false, resets: null, credits: null, ...patch };
 }
 
 describe("BurnTracker", () => {

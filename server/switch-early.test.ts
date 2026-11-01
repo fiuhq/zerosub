@@ -28,7 +28,7 @@ function windows(fiveHour: number, weekly: number, from = NOW): UsageWindow[] {
 }
 
 function reading(fiveHour: number, weekly: number, patch: Partial<Usage> = {}): Usage {
-  return { fetchedAt: new Date(NOW - 60_000).toISOString(), windows: windows(fiveHour, weekly), error: null, cached: false, resets: null, ...patch };
+  return { fetchedAt: new Date(NOW - 60_000).toISOString(), windows: windows(fiveHour, weekly), error: null, cached: false, resets: null, credits: null, ...patch };
 }
 
 describe("nearlyFull", () => {

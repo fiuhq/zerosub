@@ -6,7 +6,7 @@ const NOW = Date.parse("2026-10-29T12:00:00Z");
 const inHours = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
 
 function usage(...windows: UsageWindow[]): Usage {
-  return { fetchedAt: new Date(NOW).toISOString(), windows, error: null, cached: false, resets: null };
+  return { fetchedAt: new Date(NOW).toISOString(), windows, error: null, cached: false, resets: null, credits: null };
 }
 const fiveHour = (usedPercent: number, hours = 4): UsageWindow => ({ id: "five_hour", label: "5-hour", usedPercent, resetsAt: inHours(hours) });
 const weekly = (usedPercent: number, hours: number): UsageWindow => ({ id: "seven_day", label: "Weekly", usedPercent, resetsAt: inHours(hours) });

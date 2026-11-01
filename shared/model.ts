@@ -85,6 +85,8 @@ export const UsageWindowSchema = z.object({
   /** 0–100. */
   usedPercent: z.number(),
   resetsAt: z.string().nullable(),
+  /** How long the window is, in minutes. Only Codex readings have it; `null` when Codex doesn't say. */
+  minutes: z.number().nullable().optional(),
 });
 export type UsageWindow = z.infer<typeof UsageWindowSchema>;
 
@@ -105,6 +107,14 @@ export const ResetOfferSchema = z.object({
 });
 export type ResetOffer = z.infer<typeof ResetOfferSchema>;
 
+/** Prepaid credits that keep an account going once its windows run out (ChatGPT credits for Codex). */
+export const CreditsSchema = z.object({
+  /** Credits left; `null` when the provider doesn't say how many. */
+  balance: z.number().nullable(),
+  unlimited: z.boolean(),
+});
+export type Credits = z.infer<typeof CreditsSchema>;
+
 export const UsageSchema = z.object({
   fetchedAt: z.string(),
   windows: z.array(UsageWindowSchema),
@@ -114,6 +124,8 @@ export const UsageSchema = z.object({
   cached: z.boolean().default(false),
   /** Banked resets, when the provider reports any. */
   resets: ResetOfferSchema.nullable().default(null),
+  /** Credits the account can spend past full windows, when the provider reports any. */
+  credits: CreditsSchema.nullable().default(null),
 });
 export type Usage = z.infer<typeof UsageSchema>;
 
@@ -163,6 +175,8 @@ export const AgentRouteSchema = z.object({
    * continues the work in a new agent instead.
    */
   movable: z.boolean(),
+  /** The agent started on this account because its weekly reset was near, and is still on it. */
+  selectionReason: z.literal("weekly_reset").optional(),
 });
 export type AgentRoute = z.infer<typeof AgentRouteSchema>;
 
