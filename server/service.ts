@@ -2071,12 +2071,11 @@ export class Service {
       // Signing an account back in must not quietly turn it into a different login.
       if (session.home) await adapter.logout(session.home).catch(() => undefined);
       const expected = existing.email ?? existing.label;
-      // Only a Codex key can come without the email, and then it doesn't say which member signed in.
       return this.failLogin(
         session,
-        identity.email
-          ? `You signed in as ${identity.email}, but this is ${expected}. Sign in as ${expected}, or use Add account for the other one.`
-          : `Couldn't tell which workspace member signed in, because Codex didn't return an email. Sign in again as ${expected}.`,
+        session.family === "codex" && !identity.email
+          ? `Couldn't tell which workspace member signed in, because Codex didn't return an email. Sign in again as ${expected}.`
+          : `You signed in as ${identity.email ?? "a different account"}, but this is ${expected}. Sign in as ${expected}, or use Add account for the other one.`,
       );
     }
     // The CLI's own login is whatever the user signs it into; only added accounts must be distinct.
