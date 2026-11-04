@@ -469,9 +469,18 @@ describe("forking to the other provider", () => {
 
   /**
    * `conversation` is the agent's timeline, which Paseo pages from its tail. `opencodeModels` forks to
-   * OpenCode Go, listing those models, instead of to ChatGPT.
+   * OpenCode Go, listing those models, instead of to ChatGPT. `labels` are the agent's labels and `others`
+   * the host's other agents.
    */
-  async function setUpFork(modeId: string, conversation: readonly Row[] = [], opencodeModels?: Array<{ id: string; isDefault?: boolean }>) {
+  async function setUpFork(
+    modeId: string,
+    conversation: readonly Row[] = [],
+    {
+      opencodeModels,
+      labels = {},
+      others = [],
+    }: { opencodeModels?: Array<{ id: string; isDefault?: boolean }>; labels?: Record<string, string>; others?: Array<Record<string, unknown>> } = {},
+  ) {
     const other = opencodeModels ? "opencode" : "codex";
     const store = new StateStore(join(root, "state.json"));
     await store.update((draft) =>
@@ -490,9 +499,9 @@ describe("forking to the other provider", () => {
       workspaceId: "ws-1",
       archivedAt: null,
       lastUserMessageAt: "2026-09-23T07:00:00.000Z",
-      labels: {},
+      labels,
     };
-    const agents: Array<Record<string, unknown>> = [source];
+    const agents: Array<Record<string, unknown>> = [source, ...others];
     const created: Array<{ agentId: string; config: { provider: string; modeId?: string }; title: string; prompt: string; labels: Record<string, string> }> = [];
     const notes: Array<{ to: string; outcome: string; toFamily: string | null; detail: string | null; continuedIn: { agentId: string } | null }> = [];
     const paseo = {
@@ -519,8 +528,8 @@ describe("forking to the other provider", () => {
       },
       agents: {
         list: async () => ({ entries: agents.map((agent) => ({ agent })), pageInfo: { hasMore: false, nextCursor: null } }),
-        ref: () => ({
-          refresh: async () => ({ agent: source }),
+        ref: (id: string) => ({
+          refresh: async () => ({ agent: others.find((agent) => agent.id === id) ?? source }),
           send: async () => undefined,
           timeline: {
             append: async (item: { data: (typeof notes)[number] }) => void notes.push(item.data),
@@ -566,6 +575,19 @@ describe("forking to the other provider", () => {
     expect(notes.at(-1)).toMatchObject({ outcome: "continued", toFamily: "codex", to: "hello", continuedIn: { agentId: fork?.agentId } });
   });
 
+  it.each([
+    ["its parent", [], "lead"],
+    ["where its parent's own work went on ChatGPT", [{ id: "lead-on-chatgpt", provider: "codex", labels: { "zerosub.continued-from": "lead" } }], "lead-on-chatgpt"],
+  ])("carries a sub-agent's work on as a sub-agent of %s", async (_, moved, parent) => {
+    const lead = { id: "lead", provider: "claude", status: "idle", title: "Lead the release", workspaceId: "ws-1", archivedAt: null, labels: {} };
+    const others = [lead, ...moved.map((agent) => ({ status: "idle", title: "Lead the release (continued on ChatGPT)", workspaceId: "ws-1", archivedAt: null, ...agent }))];
+    const { created, limitTurn } = await setUpFork("bypassPermissions", [], { labels: { "paseo.parent-agent-id": "lead" }, others });
+    await limitTurn();
+    expect(created).toHaveLength(1);
+    expect(created[0]?.labels).toEqual({ "zerosub.continued-from": AGENT, "paseo.parent-agent-id": parent });
+    expect(created[0]?.prompt).toMatch(/earlier Claude Code session that stopped because every Claude account reached its usage limit/);
+  });
+
   it("points at the earlier fork instead of starting another", async () => {
     const { created, notes, limitTurn } = await setUpFork("bypassPermissions");
     await limitTurn();
@@ -593,16 +615,15 @@ describe("forking to the other provider", () => {
   });
 
   it("starts an OpenCode Go fork on a Go model even when OpenCode's default is another provider's", async () => {
-    const { created, limitTurn } = await setUpFork("bypassPermissions", [], [
-      { id: "anthropic/claude-sonnet-5-5", isDefault: true },
-      { id: "opencode-go/glm-5.3" },
-    ]);
+    const { created, limitTurn } = await setUpFork("bypassPermissions", [], {
+      opencodeModels: [{ id: "anthropic/claude-sonnet-5-5", isDefault: true }, { id: "opencode-go/glm-5.3" }],
+    });
     await limitTurn();
     expect(created.map((request) => request.config)).toEqual([{ provider: "opencode/opencode-go/glm-5.3", modeId: "build" }]);
   });
 
   it("won't fork to OpenCode Go when OpenCode lists no Go model", async () => {
-    const { created, notes, limitTurn } = await setUpFork("bypassPermissions", [], [{ id: "anthropic/claude-sonnet-5-5", isDefault: true }]);
+    const { created, notes, limitTurn } = await setUpFork("bypassPermissions", [], { opencodeModels: [{ id: "anthropic/claude-sonnet-5-5", isDefault: true }] });
     await limitTurn();
     expect(created).toHaveLength(0);
     expect(notes.at(-1)).toMatchObject({ outcome: "stayed", detail: "OpenCode has no OpenCode Go model to continue on." });
