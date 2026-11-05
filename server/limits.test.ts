@@ -145,6 +145,14 @@ describe("detectClaudeLimit", () => {
     }
   });
 
+  it("recognises a subscription with a payment past due as a budget", () => {
+    const text =
+      "Claude Code can't use your Claude subscription, usually because a payment is past due · Pay or renew at https://claude.ai/settings/billing (if you just paid, try again shortly), or use an Anthropic API key instead";
+    const hit = detectClaudeLimit({ outcome: completed, timeline: turn(text) }, NOW);
+    expect(hit?.kind).toBe("budget");
+    expect(hit?.resetsAt).toBeNull();
+  });
+
   it("does not mistake ordinary replies for limits", () => {
     const replies = [
       "You've hit your GitHub API rate limit. Wait an hour and try again.",
