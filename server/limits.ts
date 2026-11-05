@@ -30,7 +30,7 @@ const CLAUDE_LIMITS: ReadonlyArray<{ pattern: RegExp; kind: LimitKind }> = [
   { pattern: new RegExp(`^Your group${APOSTROPHE}s usage limit is set to \\$0`, "i"), kind: "budget" },
   { pattern: /^Fable(?: [^·\n]{1,40})? requires usage credits\./, kind: "budget" },
   // 2.1.318: a subscription with a payment past due; it lifts once billing is settled.
-  { pattern: new RegExp(`^Claude Code can${APOSTROPHE}t use your Claude subscription\\b`, "i"), kind: "budget" },
+  { pattern: new RegExp(`^Claude Code can${APOSTROPHE}t use your Claude subscription, usually because a payment is past due${END}`, "i"), kind: "budget" },
 ];
 
 /** Codex's messages for plan limits (typographic apostrophe) and workspace budgets, plus the raw error type. */

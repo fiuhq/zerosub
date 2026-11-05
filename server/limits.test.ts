@@ -160,6 +160,7 @@ describe("detectClaudeLimit", () => {
       "You've hit your session limit is what users will see after this change.",
       "You've hit your 5-hour limit is what users will see after this change.",
       "You've hit your usage limit on the OpenAI API, so the integration tests were skipped.",
+      "Claude Code can't use your Claude subscription because the keychain entry is missing.",
     ];
     for (const text of replies) {
       expect(detectClaudeLimit({ outcome: completed, timeline: turn(text) }, NOW)).toBeNull();
