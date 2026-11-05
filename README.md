@@ -48,11 +48,11 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - **⌘K → "Make … the default"**.
    - **Disable for now** (in a card's ⋯ menu): the account stays signed in but ZeroSub stops using it. Its agents move to your other accounts right away (busy ones after their turn) and come back when you choose **Enable account**. ChatGPT conversations already on it stay, since they can't change accounts. You can't disable the last usable account of a provider.
 4. Leave **Automatic switching** on (in Accounts, or **Settings → Plugins → zerosub → ZeroSub preferences**) and limits take care of themselves:
-   - Only the CLIs' own limit notices trigger a switch. That covers Claude Code's "You've hit your 5-hour limit · resets 3pm" ("session limit" before Claude Code 2.1.312) and Codex's "You’ve hit your usage limit…".
+   - Only the CLIs' own limit notices trigger a switch. That covers Claude Code's "You've hit your 5-hour limit · resets 3pm" ("session limit" before Claude Code 2.1.312) and Codex's "You’ve hit your usage limit…". Claude Code's notice that a subscription's payment is past due counts too, and ZeroSub tries that account again after 3 hours.
    - Paseo 0.13 and later no longer send the finished turn to plugins, so ZeroSub reads that turn from the agent's timeline instead.
    - A short note in the agent's timeline says what happened.
    - As a safety stop, one agent changes accounts at most 4 times in 10 minutes. If it hits that, its timeline says so; pick an account from its account button to carry on.
-   - An exhausted account is skipped until it resets. If you know it has room again sooner, for example after upgrading or buying credits, choose **Mark as available again** from its card's ⋯ menu. For ChatGPT credits, see [ChatGPT credits](#chatgpt-credits).
+   - An exhausted account is skipped until it resets. If you know it has room again sooner, for example after upgrading, buying credits or paying an overdue bill, choose **Mark as available again** from its card's ⋯ menu. For ChatGPT credits, see [ChatGPT credits](#chatgpt-credits).
 5. **Accounts per project**: choose **Projects** from an account card's ⋯ menu and pick the Paseo projects whose agents should use it.
    - It follows Paseo's own projects, so every workspace and worktree of a project counts, wherever its folder lives.
    - A project has one account per provider. Picking a project that already uses another account moves it here.
