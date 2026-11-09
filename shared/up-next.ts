@@ -1,3 +1,4 @@
+import { capsAccount } from "./format";
 import type { AccountView, Usage, UsageWindow } from "./model";
 
 /**
@@ -36,7 +37,8 @@ function hoursLeft(window: UsageWindow, now: number): number {
 }
 
 export function upNextRank(usage: Usage | null | undefined, now: number, lines: UpNextLines = UP_NEXT_LINES): UpNextRank {
-  const windows = usage?.windows ?? [];
+  // Only the windows that stop the whole account count: a full "Weekly · Opus" leaves room for the rest.
+  const windows = (usage?.windows ?? []).filter(capsAccount);
   if (windows.length === 0) return { tier: 1, perHour: 0, limit: null };
   const cramped = windows.some((window) => window.usedPercent >= (isLongWindow(window) ? lines.long : lines.short));
   // The long windows are the budget; an account with none (a 5-hour-only plan) is judged on what it has.

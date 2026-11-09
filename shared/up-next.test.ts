@@ -27,6 +27,12 @@ describe("upNextRank", () => {
     expect(rank.perHour).toBe(1);
   });
 
+  it("leaves an account with a full per-model window its room for the rest", () => {
+    const rank = upNextRank(usage(weekly(63, 37), { id: "seven_day_fable", label: "Weekly · Fable", usedPercent: 100, resetsAt: inHours(90) }), NOW);
+    expect(rank.tier).toBe(0);
+    expect(rank.limit?.label).toBe("Weekly");
+  });
+
   it("sends an account at a switch line last, after one with no reading", () => {
     const cramped = upNextRank(usage(fiveHour(85), weekly(0, 2)), NOW);
     const unknown = upNextRank(null, NOW);
