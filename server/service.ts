@@ -19,6 +19,7 @@ import {
   type StateView,
   type Usage,
 } from "../shared/model";
+import { capsAccount } from "../shared/format";
 import { DEFAULT_CONTINUE_PROMPT, type Preferences } from "../shared/preferences";
 import type { ProjectOption, RedeemResult, ReopenSummary } from "../shared/rpc";
 import { SWITCH_ROW_KIND, SWITCH_ROW_VERSION, type SwitchRow } from "../shared/timeline";
@@ -190,6 +191,9 @@ export class Service {
   private collecting = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
+  /** Startup's steps have all worked; until they have, each upkeep tries them again. See `startUp`. */
+  private started = false;
+  private starting: Promise<void> | null = null;
 
   constructor(
     private readonly adapters: Record<Family, FamilyAdapter>,
@@ -210,12 +214,26 @@ export class Service {
   }
 
   async start(): Promise<void> {
-    // The last readings show right away; fresh ones replace them as they arrive.
-    for (const [accountId, reading] of await loadReadings()) if (!this.usage.has(accountId)) this.usage.set(accountId, reading);
-    await Promise.all(FAMILIES.map((family) => this.ensureFamily(family)));
+    // Upkeep runs even when a startup step fails (the registry can't be read or written for a
+    // moment, say): it tries the step again until it works.
     this.timer = setInterval(() => void this.tick().catch((error: unknown) => log("upkeep failed", error)), UPKEEP_MS);
     this.timer.unref?.();
+    await this.startUp();
     void this.tick().catch(() => undefined);
+  }
+
+  /** Shows the last readings and registers the CLIs' own logins, once it all works. */
+  private startUp(): Promise<void> {
+    if (this.started) return Promise.resolve();
+    this.starting ??= (async () => {
+      // The last readings show right away; fresh ones replace them as they arrive.
+      for (const [accountId, reading] of await loadReadings()) if (!this.usage.has(accountId)) this.usage.set(accountId, reading);
+      await Promise.all(FAMILIES.map((family) => this.ensureFamily(family)));
+      this.started = true;
+    })().finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
   }
 
   async stop(): Promise<void> {
@@ -252,6 +270,7 @@ export class Service {
 
   private async tick(): Promise<void> {
     if (this.stopped) return;
+    if (!this.started) await this.startUp().catch((error: unknown) => log("startup still didn't finish; trying again in 30 s", error));
     const now = Date.now();
     for (const family of FAMILIES) {
       const availability = this.availability.get(family);
@@ -293,7 +312,11 @@ export class Service {
     this.identityCheckedAt.set(accountId, Date.now());
     const account = findAccount(await this.store.read(), accountId);
     if (!account) return;
-    const identity = await this.adapters[account.family].identity(account.home).catch(() => null);
+    // A check that can't tell (Claude's keychain unreadable just now, say) changes nothing; the next one may.
+    const identity = await this.adapters[account.family].identity(account.home).catch((error: unknown) => {
+      log(`could not check whether ${account.label} is signed in`, error);
+      return null;
+    });
     if (!identity) return;
     await this.store.update((draft) => {
       const target = findAccount(draft, accountId);
@@ -1085,8 +1108,11 @@ export class Service {
     const usage = this.usage.get(accountId);
     if (!usage || usage.cached) return null;
     const full = usage.windows.filter((window) => window.usedPercent >= 99 && window.resetsAt);
-    full.sort((a, b) => Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? ""));
-    return full[0]?.resetsAt ?? null;
+    // A full window of one model's only is what the turn hit when none of the account's own is full,
+    // so a later-resetting model window doesn't stretch a 5-hour limit to days.
+    const hit = full.some(capsAccount) ? full.filter(capsAccount) : full;
+    hit.sort((a, b) => Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? ""));
+    return hit[0]?.resetsAt ?? null;
   }
 
   /** Did this agent's own last turn end on a limit? Then its own failover (with a follow-up) handles it. */
@@ -1509,8 +1535,12 @@ export class Service {
       // full window, so a full window alone isn't a limit then.
       const creditsCover = this.prefs.useCredits && usage.credits != null;
       const full = creditsCover ? undefined : usage.windows.find((window) => window.usedPercent >= 100 && window.resetsAt);
-      if (full && !isLimited(account, now)) {
-        await this.markLimited(accountId, full.resetsAt ?? new Date(now + WINDOW_LIMIT_MS).toISOString(), "window", "reading");
+      // One model's own full window (Claude's "Weekly · Opus") leaves the account usable for the rest.
+      // A turn that hits it still marks the account (see `failover`), and while it's full that limit
+      // doesn't clear here.
+      const cutOff = full && usage.windows.find((window) => window.usedPercent >= 100 && window.resetsAt && capsAccount(window));
+      if (cutOff && !isLimited(account, now)) {
+        await this.markLimited(accountId, cutOff.resetsAt ?? new Date(now + WINDOW_LIMIT_MS).toISOString(), "window", "reading");
         return;
       }
       // A window limit clears once usage shows room again, or once credits cover it if a reading set

@@ -1,4 +1,4 @@
-import { peakUsage } from "../shared/format";
+import { accountPeak } from "../shared/format";
 import type { Family, Usage, UsageWindow } from "../shared/model";
 import { compareUpNext, isLongWindow, upNextRank } from "../shared/up-next";
 import { FIVE_HOUR_MINUTES, WEEK_MINUTES } from "./codex";
@@ -27,6 +27,15 @@ export function isLimited(account: StoredAccount, now: number): boolean {
 
 export function isUsable(account: StoredAccount, now: number): boolean {
   return account.signedIn && !account.disabled && !isLimited(account, now);
+}
+
+/**
+ * Lower is better. Unknown usage ranks in the middle so a known-quiet account wins over a mystery.
+ * A full window of one model only, such as "Weekly · Opus", leaves the account its room for the rest.
+ */
+export function headroomScore(usage: Usage | null | undefined): number {
+  const peak = usage ? accountPeak(usage.windows) : null;
+  return peak ? peak.usedPercent : 50;
 }
 
 /** The usable account first in Up next, preferring the default, then the CLI login, on ties. */
