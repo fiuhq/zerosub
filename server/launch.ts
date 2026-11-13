@@ -9,7 +9,7 @@ import { type Family, FAMILY_PORTABLE, type Usage } from "../shared/model";
 import { preferences } from "../shared/preferences";
 import type { EnvPatch } from "./adapter";
 import { ClaudeAdapter } from "./claude";
-import { paseoHome } from "./paths";
+import { paseoHome, statePath } from "./paths";
 import { chooseAccount, type EarlyLines } from "./routing";
 import { StateStore, type StoredAccount, type StoredState } from "./state";
 import { loadReadings } from "./usage";
@@ -66,7 +66,7 @@ async function readPreferences(): Promise<Preferences> {
 async function main(): Promise<void> {
   const family = (process.argv[2] ?? "claude") as Family;
   if (family !== "claude") throw new Error(`zerosub launch: only claude is supported, got ${family}`);
-  const account = launchAccount(await new StateStore().read(), await loadReadings(), await readPreferences(), family, Date.now());
+  const account = launchAccount(await new StateStore(statePath(), { readOnly: true }).read(), await loadReadings(), await readPreferences(), family, Date.now());
   if (!account) throw new Error("zerosub launch: ZeroSub has no Claude account to route to");
   // Said on stderr so the caller's log names the account; stdout is only the env to apply.
   console.error(`[ZeroSub] launch → ${account.label}`);
