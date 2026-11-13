@@ -216,9 +216,15 @@ export class StateStore {
   private cached: StoredState | null = null;
   private readonly mutex = new Mutex();
   private readonly backups: string;
+  private readonly readOnly: boolean;
 
-  constructor(private readonly path: string = statePath()) {
+  /** `readOnly`: for another process than the daemon; it never writes, nor repairs a damaged registry. */
+  constructor(
+    private readonly path: string = statePath(),
+    { readOnly = false }: { readOnly?: boolean } = {},
+  ) {
     this.backups = join(dirname(path), "backups");
+    this.readOnly = readOnly;
   }
 
   async read(): Promise<StoredState> {
@@ -231,6 +237,7 @@ export class StateStore {
 
   /** Applies `change` to a copy and persists it. Returns the new state. */
   update(change: (draft: StoredState) => void): Promise<StoredState> {
+    if (this.readOnly) return Promise.reject(new Error(`[ZeroSub] ${this.path} is open read-only`));
     return this.mutex.run(async () => {
       const current = this.cached ?? (await this.load());
       const draft = structuredClone(current);
@@ -294,7 +301,7 @@ export class StateStore {
     const snapshot = await this.newestSnapshot();
     if (text === undefined && !snapshot) return emptyState(); // A new install.
     const problem = text === undefined ? "missing" : !text.trim() ? "empty" : raw === undefined ? "not valid JSON" : "partly invalid";
-    const kept = text === undefined ? null : await this.keepAside();
+    const kept = text === undefined || this.readOnly ? null : await this.keepAside();
     let state: StoredState;
     let outcome: string;
     if (snapshot?.whole) {
@@ -311,6 +318,10 @@ export class StateStore {
     } else {
       state = emptyState();
       outcome = "continued with an empty registry, as there is no backup";
+    }
+    if (this.readOnly) {
+      console.error(`[ZeroSub] ${this.path} was ${problem}; read it as if it ${outcome}, and left it for the daemon to repair`);
+      return state;
     }
     console.error(`[ZeroSub] ${this.path} was ${problem}${kept ? `; kept it as ${kept}` : ""}; ${outcome}`);
     await this.write(state).catch((error: unknown) => console.error("[ZeroSub] could not save the recovered state file", message(error)));

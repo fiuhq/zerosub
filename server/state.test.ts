@@ -120,6 +120,18 @@ describe("StateStore backups", () => {
     expect(state.accounts.map((entry) => entry.id)).toEqual(["claude-main"]);
   });
 
+  it("read-only, reads a partly invalid file's valid records and changes nothing on disk", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const text = JSON.stringify({ accounts: [account, { ...account, id: "claude-future", kind: "future" }] });
+    await writeFile(path(), text);
+
+    const store = new StateStore(path(), { readOnly: true });
+    expect((await store.read()).accounts.map((entry) => entry.id)).toEqual(["claude-main"]);
+    await expect(store.update(() => undefined)).rejects.toThrow();
+    expect(await readFile(path(), "utf8")).toBe(text);
+    expect(await readdir(dir)).toEqual(["state.json"]);
+  });
+
   it("keeps a bounded rotation: the latest writes, then the last of each hour and day", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const start = Date.parse("2026-10-01T00:00:00.000Z");
