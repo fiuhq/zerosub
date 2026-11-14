@@ -185,8 +185,18 @@ describe("chooseAccount", () => {
     expect(decision?.bind).toMatchObject({ accountId: soon.id, selectionReason: "weekly_reset" });
   });
 
-  it.each(["stale", "cached", "error", "missing", "short-limit", "weekly-limit", "past-reset"]) (
-    "falls back to headroom when near-reset data is %s", (condition) => {
+  // Up next: spare weekly quota per hour until reset goes first, and an account at a switch line last.
+  // The later account has 60% spare over 94h (0.6/h), or over 46h (1.3/h) beside a past reset.
+  it.each([
+    ["stale", "codex-soon"], // 40% over 22h: 1.8/h
+    ["cached", "codex-soon"],
+    ["error", "codex-soon"],
+    ["missing", "codex-soon"], // 5-hour only: 40% over 4h
+    ["short-limit", "codex-later"], // 5-hour at 90%, past the 80% line
+    ["weekly-limit", "codex-later"], // 10% over 22h: 0.5/h
+    ["past-reset", "codex-later"], // starts again empty with no reset time: 100% over 168h, 0.6/h
+  ])(
+    "falls back to headroom when near-reset data is %s", (condition, expected) => {
       const soon = account({ id: "codex-soon", family: "codex" });
       const later = account({ id: "codex-later", family: "codex" });
       const reading = (near: boolean): Usage => ({
@@ -196,16 +206,13 @@ describe("chooseAccount", () => {
         error: near && condition === "error" ? "offline" : null,
         windows: codexWindows(
           [near && condition === "short-limit" ? 90 : near && condition === "missing" ? 60 : 30, "2026-09-23T16:00:00Z"],
-          near && condition === "missing" ? null : [near && condition === "weekly-limit" ? 90 : near ? 60 : 40, near && condition === "past-reset" ? "2026-09-23T11:00:00Z" : near ? "2026-09-24T10:00:00Z" : "2026-09-27T10:00:00Z"],
+          near && condition === "missing" ? null : [near && condition === "weekly-limit" ? 90 : near ? 60 : 40, near && condition === "past-reset" ? "2026-09-23T11:00:00Z" : near ? "2026-09-24T10:00:00Z" : condition === "past-reset" ? "2026-09-25T10:00:00Z" : "2026-09-27T10:00:00Z"],
         ),
       });
-      const state = stateWith([soon, later]);
-      const usageOf = (id: string) => reading(id === soon.id);
-      const decision = chooseAccount(state, {
-        ...base, family: "codex", portable: false, balanceNewAgents: true, reason: "create", usageOf,
+      const decision = chooseAccount(stateWith([soon, later]), {
+        ...base, family: "codex", portable: false, balanceNewAgents: true, reason: "create", usageOf: (id) => reading(id === soon.id),
       });
-      // The fork balances by Up next rather than by raw headroom, so the fallback is whatever Up next picks.
-      expect(decision?.account.id).toBe(mostAvailable(state, "codex", usageOf, NOW)?.id);
+      expect(decision?.account.id).toBe(expected);
       expect(decision?.bind?.selectionReason).toBe("headroom");
     },
   );
