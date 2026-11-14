@@ -346,7 +346,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   }
   // A brand-new agent that would follow the default onto a nearly full account starts where there's
   // room instead, and stays there. An account chosen for this agent is left alone.
-  if (!skipped && fresh && !bound && input.autoSwitch && input.early && nearlyFull(input.usageOf(account.id), input.early, input.now).length > 0) {
+  if (!skipped && fresh && !bound && bind?.source !== "user" && input.autoSwitch && input.early && nearlyFull(input.usageOf(account.id), input.early, input.now).length > 0) {
     const roomy = roomyAccount(state, input.family, input.usageOf, input.early, input.now, new Set([...reserved, account.id]));
     if (roomy) {
       skipped = { account, why: "nearly_full" };

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Usage } from "../shared/model";
 import type { FamilyAdapter, Identity, UsageRead } from "./adapter";
 import type { FamilyResolver } from "./families";
 import type { Reopener } from "./reopen";
@@ -72,6 +73,23 @@ describe("next new agent pick", () => {
     }
     const spread = chooseAccount(withPick(pick, [main, limited]), { ...base, balanceNewAgents: true, reason: "create", allowNextPick: true });
     expect(spread?.bind).toMatchObject({ accountId: "claude-main", source: "balance" });
+  });
+
+  it("keeps a picked account that switch early would call nearly full", () => {
+    const usageOf = (id: string): Usage => ({
+      fetchedAt: later(-60_000), error: null, cached: false, resets: null, credits: null,
+      windows: [
+        { id: "five_hour", label: "5-hour", usedPercent: id === "work" ? 85 : 10, resetsAt: later(2 * 3_600_000) },
+        { id: "seven_day", label: "Weekly", usedPercent: 20, resetsAt: later(72 * 3_600_000) },
+      ],
+    });
+    const early = { short: 80, long: 95 };
+    const d = chooseAccount(withPick(pick), { ...base, usageOf, early, reason: "create", allowNextPick: true });
+    expect(d?.account.id).toBe("work");
+    expect(d?.bind).toMatchObject({ accountId: "work", source: "user" });
+    expect(d?.skipped).toBeNull();
+    const unpicked = chooseAccount({ ...withPick(null), defaults: { claude: "work", codex: null, pi: null } }, { ...base, usageOf, early, reason: "create", allowNextPick: true });
+    expect(unpicked?.account.id).toBe("claude-main");
   });
 
   it("with automatic switching off, still starts the agent on a picked account at its limit", () => {
