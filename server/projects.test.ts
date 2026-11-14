@@ -26,6 +26,7 @@ function account(id: string, kind: "main" | "managed" = "managed", patch: Partia
     label: id,
     autoLabel: false,
     kind,
+    auth: "subscription",
     home: kind === "main" ? null : `/homes/${id}`,
     email: null,
     plan: null,

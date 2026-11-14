@@ -13,6 +13,7 @@ function account(partial: Partial<StoredAccount> & Pick<StoredAccount, "id">): S
     label: partial.id,
     autoLabel: false,
     kind: "managed",
+    auth: "subscription",
     home: `/homes/${partial.id}`,
     email: null,
     plan: null,

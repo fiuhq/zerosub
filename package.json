@@ -1,7 +1,7 @@
 {
   "name": "@kapybara/zerosub",
-  "version": "1.5.2",
-  "description": "ZeroSub: use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot and OpenCode Go subscriptions side by side in Paseo. Add accounts in-app, pick one per agent, and switch automatically when an account hits its limit.",
+  "version": "1.6.0",
+  "description": "ZeroSub: use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot and OpenCode Go subscriptions side by side in Paseo, and run Paseo's Pi agents on several Anthropic API keys. Add accounts in-app, pick one per agent, and switch automatically when an account hits its limit.",
   "keywords": [
     "paseo",
     "paseo-plugin",
@@ -31,6 +31,7 @@
     "server/",
     "shared/",
     "!**/*.test.ts",
+    "!**/*.test-support.ts",
     "README.md",
     "LICENSE"
   ],

@@ -1,7 +1,7 @@
 import { chmod, copyFile, readdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { AccountKindSchema, FAMILIES, FamilySchema, type Family } from "../shared/model";
+import { AccountKindSchema, AuthKindSchema, FAMILIES, FamilySchema, type Family } from "../shared/model";
 import { Mutex, readJson, readText, writeJsonAtomic } from "./json-file";
 import { statePath } from "./paths";
 
@@ -12,6 +12,8 @@ export const StoredAccountSchema = z.object({
   /** The label was generated from the email and may be replaced when the identity is learned. */
   autoLabel: z.boolean().default(true),
   kind: AccountKindSchema,
+  /** How it signs in. `api` accounts (added Pi accounts) are only used when chosen, never by automatic routing. */
+  auth: AuthKindSchema.default("subscription"),
   /** Credential home (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`). `null` for the CLI's own login. */
   home: z.string().nullable(),
   email: z.string().nullable().default(null),
@@ -94,6 +96,9 @@ export const ProjectRuleSchema = z.object({
   name: z.string().nullable().default(null),
 });
 export type ProjectRule = z.infer<typeof ProjectRuleSchema>;
+/** A one-time choice: the next new agent of this family starts on this account (until it expires). */
+export const NextAgentPickSchema = z.object({ accountId: z.string(), until: z.string() });
+export type NextAgentPick = z.infer<typeof NextAgentPickSchema>;
 
 /** A home to sign out and delete once nothing runs on it any more. */
 export const CleanupSchema = z.object({
@@ -105,6 +110,16 @@ export const CleanupSchema = z.object({
   at: z.string(),
 });
 export type Cleanup = z.infer<typeof CleanupSchema>;
+
+export const PiHomesSchema = z.object({
+  dir: z.string().nullable().default(null),
+  from: z.array(z.string()).default([]),
+});
+export type PiHomes = z.infer<typeof PiHomesSchema>;
+
+/** A home being moved, written before anything moves, so a move cut short is finished from here. */
+export const MoveSchema = z.object({ from: z.string(), to: z.string(), at: z.string() });
+export type Move = z.infer<typeof MoveSchema>;
 
 export const StoredStateSchema = z.object({
   version: z.literal(1).default(1),
@@ -122,6 +137,12 @@ export const StoredStateSchema = z.object({
    * `accounts` may just be missing from a damaged or hand-edited registry.
    */
   cleanup: z.record(z.string(), CleanupSchema).default({}),
+  /** The one-time "next new agent" pick of each family, by family. */
+  nextAgent: z.record(z.string(), NextAgentPickSchema.nullable()).default({}),
+  /** Where added Pi accounts' homes are kept: `dir` (null: `~/.pi-config`), and folders picked before whose accounts still move to it. */
+  piHomes: PiHomesSchema.default({ dir: null, from: [] }),
+  /** Homes being moved, by account (see `Service.placeHomes`). */
+  moves: z.record(z.string(), MoveSchema).default({}),
 });
 export type StoredState = z.infer<typeof StoredStateSchema>;
 
@@ -170,6 +191,9 @@ export function salvageState(raw: unknown): { state: StoredState; dropped: boole
         .map((entry) => keep(ProjectRuleSchema, entry))
         .filter((entry): entry is ProjectRule => entry !== undefined),
       cleanup: records(CleanupSchema, source.cleanup),
+      nextAgent: {},
+      piHomes: keep(PiHomesSchema, source.piHomes ?? {}) ?? { dir: null, from: [] },
+      moves: records(MoveSchema, source.moves),
     },
     dropped: true,
   };

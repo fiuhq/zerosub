@@ -14,7 +14,7 @@ beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "zerosub-login-"));
 afterEach(async () => {
   await service?.stop();
   vi.unstubAllEnvs();
-  await rm(root, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 5 });
 });
 
 async function login(email: string | null, existingId?: string, storedEmail: string | null = "first@example.com", family: Family = "codex") {
@@ -24,7 +24,7 @@ async function login(email: string | null, existingId?: string, storedEmail: str
     // An account saved by 1.2.1, not yet refreshed by background upkeep.
     draft.accounts.push({
       id: "codex-existing", family, label: "first", autoLabel: false,
-      kind: "managed", home: root, email: storedEmail, plan: "team", organization: null,
+      kind: "managed", auth: "subscription", home: root, email: storedEmail, plan: "team", organization: null,
       identity: family === "codex" ? "chatgpt|team-workspace" : `${family}|old-key`, signedIn: true, disabled: false,
       limitedUntil: null, limitKind: null, limitedAt: null, createdAt: new Date().toISOString(),
     });

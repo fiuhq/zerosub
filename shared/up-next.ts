@@ -38,7 +38,10 @@ function hoursLeft(window: UsageWindow, now: number): number {
 
 export function upNextRank(usage: Usage | null | undefined, now: number, lines: UpNextLines = UP_NEXT_LINES): UpNextRank {
   // Only the windows that stop the whole account count: a full "Weekly · Opus" leaves room for the rest.
-  const windows = (usage?.windows ?? []).filter(capsAccount);
+  // A window whose reset has passed since the reading starts again empty, until it's read again.
+  const windows = (usage?.windows ?? [])
+    .filter(capsAccount)
+    .map((window) => (window.resetsAt && Date.parse(window.resetsAt) <= now ? { ...window, usedPercent: 0, resetsAt: null } : window));
   if (windows.length === 0) return { tier: 1, perHour: 0, limit: null };
   const cramped = windows.some((window) => window.usedPercent >= (isLongWindow(window) ? lines.long : lines.short));
   // The long windows are the budget; an account with none (a 5-hour-only plan) is judged on what it has.

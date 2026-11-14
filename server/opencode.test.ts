@@ -147,6 +147,7 @@ function account(id: string, kind: "main" | "managed"): StoredAccount {
     label: id,
     autoLabel: false,
     kind,
+    auth: "subscription",
     home: kind === "main" ? null : join(root, id),
     email: null,
     plan: null,

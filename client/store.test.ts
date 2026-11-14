@@ -12,7 +12,10 @@ function view(overrides: Partial<StateView> = {}): StateView {
     providers: {},
     canReopen: false,
     browserSignIn: true,
+    piLaunchers: null,
+    piHomes: null,
     showComposerPill: false,
+    autoSwitch: false,
     warnings: [],
     ...overrides,
   };
