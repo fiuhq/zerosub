@@ -623,6 +623,7 @@ function AccountCard({
       ) : null}
       {editingApi ? <ApiKeyModal theme={theme} store={store} account={account} onClose={() => setEditingApi(false)} /> : null}
       {editingProxy ? <ProxyModal theme={theme} store={store} account={account} onClose={() => setEditingProxy(false)} /> : null}
+      {choosingProjects ? <ProjectsModal theme={theme} account={account} store={store} onClose={() => setChoosingProjects(false)} /> : null}
       <Modal title={`Remove ${account.label}?`} open={confirmRemove} onOpenChange={setConfirmRemove}>
         <Modal.Content>
           <Text style={text.body}>

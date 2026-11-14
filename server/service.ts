@@ -1106,7 +1106,7 @@ export class Service {
       const current = this.runningOn(state, agentId, family);
       const target = this.targetFor(state, agentId, family, current);
       if (!current || !target || target === current) return; // Switched back meanwhile.
-      if (entry.unattended) {
+      if (entry.unattended && row?.reason !== "early") {
         // Left by alignment for a turn, during which the account may have come back (a limit lifted):
         // nobody asked for this move, so it only goes ahead off an account the agent can't work on.
         const info = await lookUpAgent(paseo, agentId).catch(() => null);
@@ -2290,7 +2290,7 @@ export class Service {
     // Only a move left for its turn, or one alignment tries, happens before the session next starts.
     // One left for its turn goes ahead as `finishDeferred` checks: always when asked for, and when
     // nobody asked, only while alignment would still make it.
-    const happens = deferred ? !deferred.unattended || this.movesUnattended(state, agent, family, current, target, now) : this.alignmentTries(state, agent, family, current, target, now);
+    const happens = deferred ? !deferred.unattended || deferred.row?.reason === "early" || this.movesUnattended(state, agent, family, current, target, now) : this.alignmentTries(state, agent, family, current, target, now);
     if (!happens) return "restart";
     if (busy(agent)) return "turn";
     if (hasBackgroundWork(agent) && (deferred?.unattended ?? true)) return "background";

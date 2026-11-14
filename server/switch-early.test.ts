@@ -188,7 +188,7 @@ async function setUp(levels: Record<string, [number, number]>, state: Partial<St
   const reads: string[] = [];
   const reopened: string[] = [];
   const notes: Array<{ reason: string; from: string | null; to: string; outcome: string; detail: string | null }> = [];
-  const agent = { id: AGENT, provider: "claude", status: "idle", archivedAt: null };
+  const agent = { id: AGENT, provider: "claude", status: "idle", archivedAt: null, backgroundWork: { count: 0 } };
   const paseo = {
     config: { get: async () => ({ config: { providers: {} } }) },
     agents: {
@@ -218,7 +218,7 @@ async function setUp(levels: Record<string, [number, number]>, state: Partial<St
   const turnEnds = () =>
     service.onTurnEnded({ agent: { id: AGENT, provider: "claude" }, turnId: "t", outcome: { kind: "completed" }, timeline: [] } as never, context);
   const turnStarts = () => service.onTurnStarted({ id: AGENT, provider: "claude" }, context);
-  return { service, store, reads, reopened, notes, turnEnds, turnStarts };
+  return { service, store, reads, reopened, notes, turnEnds, turnStarts, agent };
 }
 
 describe("switch early after a turn", () => {
@@ -233,6 +233,20 @@ describe("switch early after a turn", () => {
     expect(state.bindings[AGENT]).toMatchObject({ accountId: SPARE, source: "auto" });
     expect(state.sessions[AGENT]?.accountId).toBe(SPARE);
     expect(notes.at(-1)).toMatchObject({ reason: "early", from: MAIN, to: SPARE, outcome: "switched", detail: "at 84% of its 5-hour limit" });
+  });
+
+  it("waits for the agent's background work, then still moves it at a later turn end", async () => {
+    const levels: Record<string, [number, number]> = { [MAIN]: [70, 40], [SPARE]: [10, 20] };
+    const { store, reopened, turnEnds, agent } = await setUp(levels);
+    levels[MAIN] = [84, 41];
+    agent.backgroundWork.count = 1;
+    await turnEnds();
+    expect(reopened).toEqual([]);
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(MAIN);
+    agent.backgroundWork.count = 0;
+    await turnEnds();
+    expect(reopened).toEqual([AGENT]);
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(SPARE);
   });
 
   it("moves before the line when the account is climbing fast enough to cross it during the next turn", async () => {
