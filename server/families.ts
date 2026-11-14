@@ -1,5 +1,6 @@
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { FAMILIES, type Family } from "../shared/model";
+import { rememberProviderEnvs } from "./provider-env";
 
 type PaseoApi = PluginHandlerContext["paseo"];
 
@@ -22,7 +23,12 @@ const OWN_AUTH_KEYS: Record<Family, readonly string[]> = {
   kimi: ["KIMI_CODE_HOME", "KIMI_CODE_BASE_URL", "KIMI_CODE_OAUTH_HOST", "KIMI_OAUTH_HOST"],
   opencode: ["OPENCODE_API_KEY", "XDG_DATA_HOME"],
   copilot: ["COPILOT_HOME", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "COPILOT_PROVIDER_BASE_URL", "COPILOT_OFFLINE"],
+  // Pi keeps every sign-in in its agent directory, and a key stored there outranks one in the
+  // environment, so only a directory of the entry's own means it isn't Pi's usual login.
+  pi: ["PI_CODING_AGENT_DIR"],
 };
+
+const isFamily = (id: unknown): id is Family => typeof id === "string" && (FAMILIES as readonly string[]).includes(id);
 
 export function bringsOwnAuth(family: Family, env: Record<string, unknown> | undefined): boolean {
   if (!env) return false;
@@ -33,12 +39,8 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
-function isFamily(id: unknown): id is Family {
-  return (FAMILIES as readonly unknown[]).includes(id);
-}
-
 /**
- * Maps Paseo provider IDs to the subscription family they run on: each family's built-in provider,
+ * Maps Paseo provider IDs to the family they run on: each family's built-in provider (Pi's included),
  * plus custom profiles that extend one without their own credentials.
  */
 export function familiesFromConfig(providers: Record<string, unknown> | undefined): Record<string, Family> {
@@ -70,7 +72,10 @@ export class FamilyResolver {
     let value: Record<string, Family>;
     try {
       const { config } = await paseo.config.get();
-      value = familiesFromConfig(asRecord(config.providers));
+      const providers = asRecord(config.providers);
+      value = familiesFromConfig(providers);
+      // Pi's provider `env` (a proxy there, say) is what its agents inherit; see server/pi.ts.
+      rememberProviderEnvs(value, providers);
     } catch (error) {
       console.warn("[ZeroSub] could not read provider config; using built-in providers only", describe(error));
       value = Object.fromEntries(FAMILIES.map((family) => [family, family]));

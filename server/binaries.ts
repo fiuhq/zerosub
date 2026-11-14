@@ -32,7 +32,9 @@ export async function providerCommand(provider: Family): Promise<Command> {
     }
     cache = { at: Date.now(), value };
   }
-  return cache.value[provider] ?? { command: provider, prefix: [] };
+  // Paseo's Pi provider also takes its binary from PI_COMMAND (or the older PI_ACP_PI_COMMAND).
+  const fallback = provider === "pi" ? process.env.PI_COMMAND?.trim() || process.env.PI_ACP_PI_COMMAND?.trim() || "pi" : provider;
+  return cache.value[provider] ?? { command: fallback, prefix: [] };
 }
 
 let quietOpener: Promise<string | null> | null = null;
