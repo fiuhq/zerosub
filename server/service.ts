@@ -11,6 +11,8 @@ import {
   FAMILY_CLI,
   FAMILY_LABEL,
   fallbackFamilies,
+  HAND_OFF,
+  OPTIONAL,
   type AccountView,
   type ApiSummary,
   type AgentRoute,
@@ -27,6 +29,7 @@ import type { ProjectOption, RedeemResult, ReopenSummary } from "../shared/rpc";
 import { SWITCH_ROW_KIND, SWITCH_ROW_VERSION, type SwitchRow } from "../shared/timeline";
 import {
   applyEnv,
+  missingAdapter,
   type AgentTimelineItem,
   type FamilyAdapter,
   type Identity,
@@ -210,6 +213,11 @@ interface Opening {
 }
 type Problem = { kind: "limit"; hit: LimitHit } | { kind: "signed_out" };
 
+/** Why a conversation of a provider without hand-off (Grok's) can't be given another account. */
+function stays(family: Family, on: string | null): string {
+  return `${FAMILY_LABEL[family]} conversations stay on the account they started on${on ? ` (${on})` : ""}. Start a new agent to use another account; new agents follow your pick and the default.`;
+}
+
 /**
  * Whether the agent has a session open. One whose last turn failed ("error": an API key out of
  * credit, say) still does, and its next message goes to that session as it is, so it's moved like an
@@ -375,12 +383,16 @@ export class Service {
   /** Whether records of sessions that ended while ZeroSub was off are forgotten yet (once a run). */
   private endedForgotten = false;
 
+  private readonly adapters: Record<Family, FamilyAdapter>;
+
+  /** A family left out of `adapters` is never available here (see `missingAdapter`). */
   constructor(
-    private readonly adapters: Record<Family, FamilyAdapter>,
+    adapters: Partial<Record<Family, FamilyAdapter>> & Record<"claude" | "codex", FamilyAdapter>,
     private readonly store = new StateStore(),
     private readonly families = new FamilyResolver(),
     private readonly reopener = new Reopener(),
   ) {
+    this.adapters = Object.fromEntries(FAMILIES.map((family) => [family, adapters[family] ?? missingAdapter(family)])) as Record<Family, FamilyAdapter>;
     this.continuations = new CodexContinuations(store);
   }
 
@@ -1419,13 +1431,13 @@ export class Service {
     }
 
     // A ChatGPT thread can't move to another account; carry the work on in a new agent there.
-    if (!this.prefs.autoContinue) {
+    if (!this.prefs.autoContinue || !HAND_OFF[family]) {
       await this.appendRow(paseo, agentId, {
         ...base,
         to: next.label,
         reason,
         outcome: "stayed",
-        detail: `New ChatGPT agents will use ${next.label}.`,
+        detail: `New ${FAMILY_LABEL[family]} agents will use ${next.label}.`,
       });
       return;
     }
@@ -2599,8 +2611,8 @@ export class Service {
     const state = await this.store.read();
     for (const family of FAMILIES) {
       const availability = this.availability.get(family);
-      // Pi is optional: it's only missed once an account of it was added.
-      if (family === "pi" && !state.accounts.some((account) => account.family === "pi" && account.kind === "managed")) continue;
+      // An optional provider (Pi, Grok) is only missed once an account of it was added.
+      if (OPTIONAL[family] && !state.accounts.some((account) => account.family === family && account.kind === "managed")) continue;
       if (availability && !availability.ok) {
         warnings.push(
           `${FAMILY_CLI[family]} isn't installed where the daemon can run it${availability.detail ? ` (${availability.detail})` : ""}. Install it to add ${FAMILY_LABEL[family]} accounts.`,
@@ -2842,6 +2854,7 @@ export class Service {
         const binding = state.bindings[agentId];
         const current = binding?.source === "thread" ? binding.accountId : this.runningOn(state, agentId, family);
         if (current === target.id) return emptySummary();
+        if (!HAND_OFF[family]) throw new Error(stays(family, findAccount(state, current)?.label ?? null));
         const from = findAccount(state, current)?.label ?? null;
         const handoff = (async (): Promise<ReopenSummary> => {
           const continuation = await this.withSwitch(agentId, () => this.continueElsewhere(
@@ -2917,7 +2930,7 @@ export class Service {
     const account = findAccount(state, accountId);
     if (!account) throw new Error("That account no longer exists.");
     if (account.kind === "main") {
-      throw new Error("Your CLI login can't be removed here. Sign out with `claude auth logout`, `codex logout` or Pi's /logout instead.");
+      throw new Error("Your CLI login can't be removed here. Sign out with `claude auth logout`, `codex logout`, `grok logout` or Pi's /logout instead.");
     }
     if (!this.adapters[account.family].portable) {
       // These conversations can't move to another ChatGPT account, so removing theirs would strand them.
@@ -2930,10 +2943,11 @@ export class Service {
       );
       if (stranded.length > 0) {
         const one = stranded.length === 1;
+        const elsewhere = !HAND_OFF[account.family] ? "" : ` or continue ${one ? "it" : "them"} on another account from the account button`;
         throw new Error(
-          `${stranded.length} ChatGPT conversation${one ? "" : "s"} still ${one ? "runs" : "run"} on ${account.label} and can't move to another account. Archive ${
+          `${stranded.length} ${FAMILY_LABEL[account.family]} conversation${one ? "" : "s"} still ${one ? "runs" : "run"} on ${account.label} and can't move to another account. Archive ${
             one ? "it" : "them"
-          } (the work stays in your files) or continue ${one ? "it" : "them"} on another account from the account button, then remove ${account.label}.`,
+          } (the work stays in your files)${elsewhere}, then remove ${account.label}.`,
         );
       }
     }

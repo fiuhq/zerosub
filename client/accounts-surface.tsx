@@ -4,7 +4,7 @@ import { SettingsCard, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { accountSubtitle, describeReopen, formatAge, formatCredits, formatExtraUsage, formatPlan, staleNotice, usageSummary } from "../shared/format";
-import { FALLBACK_ORDER, FAMILIES, FAMILY_HEADING, FAMILY_LABEL, FAMILY_PORTABLE, familyPhrase, type AccountView, type Family, type StateView } from "../shared/model";
+import { FALLBACK_ORDER, FAMILY_HEADING, FAMILY_LABEL, FAMILY_PORTABLE, HAND_OFF, familyPhrase, shownFamilies, type AccountView, type Family, type StateView } from "../shared/model";
 import { preferences } from "../shared/preferences";
 import {
   clearAccountLimit,
@@ -48,8 +48,9 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
   // Keep usage moving while the screen is open.
   useEffect(() => store.watch(VISIBLE_POLL_MS), [store]);
 
-  // Pi shows once its CLI login is registered (Pi is installed where the daemon runs) or an account of it was added.
-  const families = FAMILIES.filter((family) => family !== "pi" || state?.accounts.some((account) => account.family === "pi"));
+  // An optional provider (Pi, Grok) shows once its CLI login is registered (its CLI is there, and for
+  // Grok a Paseo provider runs it) or an account of it was added.
+  const families = shownFamilies(state?.accounts ?? []);
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
       <ScrollView
@@ -80,9 +81,9 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
             ) : null}
           </View>
           <Text style={text.muted}>
-            Keep several {familyPhrase()} accounts signed in, and run Pi on several Anthropic API keys. Each
-            agent uses one; when an account runs out, agents move to the one whose spare quota runs out soonest
-            and keep going.
+            Keep several {familyPhrase([...FALLBACK_ORDER, "grok"])} accounts signed in, and run Pi on several Anthropic API keys.
+            Each agent uses one; when a {familyPhrase(FALLBACK_ORDER, "or")} account runs out, agents move to the one whose spare
+            quota runs out soonest and keep going.
           </Text>
         </View>
 
@@ -266,6 +267,12 @@ function FamilySection({
         <Text style={text.muted}>No {FAMILY_LABEL[family]} accounts yet.</Text>
       ) : null}
       {family === "pi" ? <PiSectionNotes theme={theme} state={state} accounts={accounts} store={store} /> : <UpNext theme={theme} accounts={accounts} />}
+      {!HAND_OFF[family] ? (
+        <Text style={text.small}>
+          A {FAMILY_LABEL[family]} conversation stays on the account it started on. New agents use the default account, or the
+          one you pick for them.
+        </Text>
+      ) : null}
       {chunk(accounts, columns).map((row) => (
         <View key={row.map((account) => account.id).join()} style={{ flexDirection: "row", gap: 10 }}>
           {row.map((account) => (
@@ -328,7 +335,7 @@ function AccountCard({
       const message = describeReopen(`${account.label} is ${enabling ? "enabled" : "disabled"}`, result);
       const stayed =
         result.stayed > 0
-          ? ` · ${result.stayed} ChatGPT conversation${result.stayed === 1 ? " stays" : "s stay"} on it (they can't change accounts)`
+          ? ` · ${result.stayed} ${FAMILY_LABEL[account.family]} conversation${result.stayed === 1 ? " stays" : "s stay"} on it (they can't change accounts)`
           : "";
       toast.show(`${message}${stayed}`, { variant: result.failed.length > 0 ? "warning" : "success", durationMs: 5_000 });
     } catch (error) {

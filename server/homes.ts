@@ -5,7 +5,7 @@ import type { ApiSummary, Family } from "../shared/model";
 import { Mutex, readJson } from "./json-file";
 import { REQUIRED_NO_PROXY, bypassesProxy, maskProxy } from "./proxy";
 import { providerEnv } from "./provider-env";
-import { homesDir, isOwnHome, mainClaudeDir, mainClaudeGlobalConfig, mainCodexHome, mainCopilotHome, mainKimiHome, mainPiDir } from "./paths";
+import { homesDir, isOwnHome, mainClaudeDir, mainClaudeGlobalConfig, mainCodexHome, mainCopilotHome, mainGrokHome, mainKimiHome, mainPiDir } from "./paths";
 
 /**
  * A managed account home is a real directory holding that account's own credentials and account
@@ -549,6 +549,52 @@ export async function prepareCopilotHome(home: string, force = false): Promise<v
   const last = lastSync.get(home);
   if (!force && last && Date.now() - last < SYNC_TTL_MS) return;
   await syncOverlay(home, { main: mainCopilotHome(), shareDirs: ["session-state"], isPrivate: copilotPrivate });
+  lastSync.set(home, Date.now());
+}
+
+// --------------------------------------------------------------------------- Grok
+
+/**
+ * Per-account entries in a Grok home: the login (`auth.json`, or a file `GROK_AUTH_PATH` names there),
+ * MCP sign-ins, what Grok fetched for this account (settings, model list, experiments, the team's
+ * managed config and requirements), and the running processes' own state: locks, sockets, the leader,
+ * logs, crash reports and trace uploads (sent with this account's login). The rest, sessions included,
+ * is shared, so an agent reopens on another account with its conversation.
+ */
+const GROK_PRIVATE = new Set([
+  "auth.json",
+  "mcp_credentials.json",
+  "settings_cache.json",
+  "models_cache.json",
+  "experiments_remote_opt_out",
+  "managed_config.toml",
+  "managed_config_cache.json",
+  "managed_config.sig.json",
+  "managed_identity.sig.json",
+  "staged",
+  "requirements.toml",
+  "active_sessions.json",
+  "logs",
+  "upload_queue",
+  "memtrace",
+  "crash",
+  ".metadata_version",
+]);
+
+export function grokPrivate(name: string): boolean {
+  return (
+    GROK_PRIVATE.has(name) ||
+    isTemporary(name) ||
+    /auth|credential|token|secret/i.test(name) ||
+    name.startsWith("leader") ||
+    /\.(?:lock|sock|pid)$/.test(name)
+  );
+}
+
+export async function prepareGrokHome(home: string, force = false): Promise<void> {
+  const last = lastSync.get(home);
+  if (!force && last && Date.now() - last < SYNC_TTL_MS) return;
+  await syncOverlay(home, { main: mainGrokHome(), shareDirs: ["sessions"], isPrivate: grokPrivate });
   lastSync.set(home, Date.now());
 }
 

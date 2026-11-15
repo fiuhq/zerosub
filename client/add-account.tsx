@@ -298,8 +298,8 @@ function SignInSteps({
           </Row>
           {family === "codex" ? (
             <Text style={text.small}>
-              If the page says code sign-in is off, turn on device code sign-in in ChatGPT → Settings → Security (or
-              ask your workspace admin), then try again.
+              If the page says code sign-in is off, turn on device code sign-in in ChatGPT → Settings → Security (or ask
+              your workspace admin), then try again.
             </Text>
           ) : null}
         </Step>

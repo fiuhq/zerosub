@@ -163,6 +163,32 @@ export interface FamilyAdapter {
   ownsModel?(model: string | null): boolean;
 }
 
+/**
+ * Stands in for a family the service was given no adapter for: never available, so it never shows
+ * and nothing is routed to it.
+ */
+export function missingAdapter(family: Family): FamilyAdapter {
+  const none = async (): Promise<never> => {
+    throw new Error(`${family} isn't set up here.`);
+  };
+  return {
+    family,
+    portable: true,
+    usageSpacingMs: 60_000,
+    available: async () => ({ ok: false, detail: null }),
+    prepareHome: none,
+    env: async () => ({}),
+    identity: none,
+    usage: none,
+    redeemReset: none,
+    login: none,
+    logout: none,
+    detectLimit: () => null,
+    detectSignOut: () => null,
+    environmentWarning: () => null,
+  };
+}
+
 /** The environment for a process ZeroSub spawns against `patch`. */
 export function spawnEnv(patch: EnvPatch): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
