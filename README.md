@@ -268,7 +268,7 @@ paseo plugin logs zerosub
 Code layout:
 
 - `client/`: React Native UI (Accounts surface, sign-in modal, composer pill, commands, timeline note).
-- `server/`: routing, account homes, Claude, Codex, Grok and Pi adapters, failover, Pi account folders and scripts.
+- `server/`: routing, account homes, Claude, Codex, Kimi Code, Copilot, OpenCode Go, Grok and Pi adapters, failover, Pi account folders and scripts.
 - `shared/`: RPC contracts and the view model.
 - `bin/zerosub-claude`: runs `claude` on the account ZeroSub would give a new agent, for tools Paseo doesn't launch.
 
