@@ -4,6 +4,7 @@ import { CodexAdapter } from "./server/codex";
 import { CopilotAdapter } from "./server/copilot";
 import { KimiAdapter } from "./server/kimi";
 import { OpenCodeGoAdapter } from "./server/opencode";
+import { GrokAdapter } from "./server/grok";
 import { PiAdapter } from "./server/pi";
 import { Service, describe } from "./server/service";
 import { preferences } from "./shared/preferences";
@@ -38,6 +39,7 @@ export default function contribute(server: PluginServerContext) {
     copilot: new CopilotAdapter(),
     opencode: new OpenCodeGoAdapter(),
     pi: new PiAdapter(),
+    grok: new GrokAdapter(),
   });
 
   const settings = server.registerSettings(preferences);
