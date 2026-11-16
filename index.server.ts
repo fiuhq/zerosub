@@ -4,6 +4,7 @@ import { CodexAdapter } from "./server/codex";
 import { CopilotAdapter } from "./server/copilot";
 import { KimiAdapter } from "./server/kimi";
 import { OpenCodeGoAdapter } from "./server/opencode";
+import { CursorAdapter } from "./server/cursor";
 import { GrokAdapter } from "./server/grok";
 import { PiAdapter } from "./server/pi";
 import { Service, describe } from "./server/service";
@@ -40,6 +41,7 @@ export default function contribute(server: PluginServerContext) {
     opencode: new OpenCodeGoAdapter(),
     pi: new PiAdapter(),
     grok: new GrokAdapter(),
+    cursor: new CursorAdapter(),
   });
 
   const settings = server.registerSettings(preferences);
@@ -99,7 +101,7 @@ export default function contribute(server: PluginServerContext) {
   }
 
   server.handle(getState, ({ refreshUsage }, { paseo }) => service.view(paseo, refreshUsage));
-  server.handle(startLogin, ({ family, method, accountId }) => service.startLogin(family, method, accountId));
+  server.handle(startLogin, ({ family, method, accountId, proxy }) => service.startLogin(family, method, accountId, proxy));
   server.handle(submitLoginCode, ({ loginId, code }) => service.submitCode(loginId, code));
   server.handle(cancelLogin, ({ loginId }) => service.cancelLogin(loginId));
   server.handle(renameAccount, async ({ accountId, label }) => {

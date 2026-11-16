@@ -190,7 +190,7 @@ export class KimiAdapter implements FamilyAdapter {
 
   async login(home: string | null, _method: LoginMethod): Promise<LoginHandle> {
     const { command, prefix } = await providerCommand("kimi");
-    const env = spawnEnv(await this.env(home));
+    const env = spawnEnv(await this.env(home), "kimi");
     // The link and code show in Paseo, so `kimi login` mustn't open a browser on the daemon's machine.
     const quiet = await quietOpenerDir();
     if (quiet) env.PATH = `${quiet}${delimiter}${env.PATH ?? ""}`;

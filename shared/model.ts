@@ -1,11 +1,11 @@
 import { z } from "zod";
 
 /**
- * The provider families this plugin manages, one adapter each: the subscription CLIs (Grok Build's
- * included), and Pi, whose added accounts are Anthropic API keys. Custom provider profiles map onto one
- * of them. Adding a family means a value here, a row in each table below, and its adapter.
+ * The provider families this plugin manages, one adapter each: the subscription CLIs (Grok Build's and
+ * Cursor's included), and Pi, whose added accounts are Anthropic API keys. Custom provider profiles map onto
+ * one of them. Adding a family means a value here, a row in each table below, and its adapter.
  */
-export const FamilySchema = z.enum(["claude", "codex", "kimi", "copilot", "opencode", "pi", "grok"]);
+export const FamilySchema = z.enum(["claude", "codex", "kimi", "copilot", "opencode", "pi", "grok", "cursor"]);
 export type Family = z.infer<typeof FamilySchema>;
 export const FAMILIES: readonly Family[] = FamilySchema.options;
 
@@ -18,6 +18,7 @@ export const FAMILY_LABEL: Record<Family, string> = {
   opencode: "OpenCode Go",
   pi: "Pi",
   grok: "Grok",
+  cursor: "Cursor",
 };
 
 /** Section headings on the Accounts screen. */
@@ -29,6 +30,7 @@ export const FAMILY_HEADING: Record<Family, string> = {
   opencode: "OpenCode Go",
   pi: "Pi",
   grok: "Grok",
+  cursor: "Cursor",
 };
 
 /** The CLI that signs in and runs the agents. */
@@ -40,12 +42,13 @@ export const FAMILY_CLI: Record<Family, string> = {
   opencode: "OpenCode",
   pi: "Pi",
   grok: "Grok",
+  cursor: "Cursor",
 };
 
 /**
  * Whether a conversation can move to another account of its provider in place. ChatGPT encrypts its
- * reasoning per account, so a Codex thread with history carries on in a new agent instead; a Grok one
- * stays on its account (see `HAND_OFF`).
+ * reasoning per account, so a Codex thread with history carries on in a new agent instead; a Grok or
+ * Cursor one stays on its account (see `HAND_OFF`).
  */
 export const FAMILY_PORTABLE: Record<Family, boolean> = {
   claude: true,
@@ -55,16 +58,18 @@ export const FAMILY_PORTABLE: Record<Family, boolean> = {
   opencode: true,
   pi: true,
   grok: false,
+  cursor: false,
 };
 
 /**
  * How signing in works. `paste`: one link finishes by itself on the host and another shows a code to
  * paste back, both from the same flow. `switchable`: a browser callback or a device code typed on the
  * provider's page, each its own flow, so switching method starts a new one. `device`: only a device
- * code typed on the provider's page, from any device. Pi's added accounts are API keys, added from
- * their own form (see `AddPiAccountModal`), so its entry is never used to sign in.
+ * code typed on the provider's page, from any device. `link`: one link, opened on any device; the CLI
+ * asks the provider whether it was used. Pi's added accounts are API keys, added from their own form
+ * (see `AddPiAccountModal`), so its entry is never used to sign in.
  */
-export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable" | "device"> = {
+export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable" | "device" | "link"> = {
   claude: "paste",
   codex: "switchable",
   kimi: "device",
@@ -72,13 +77,14 @@ export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable" | "device"> =
   opencode: "paste",
   pi: "paste",
   grok: "switchable",
+  cursor: "link",
 };
 
 /**
  * Providers a stopped chat can carry on with when every account of its own is out, most preferred
  * first. The first that is installed and has a usable account takes over in a new agent. Pi isn't
- * one: its added accounts are billed per use and never take work over by themselves. Neither is Grok,
- * whose chats don't fork to another provider.
+ * one: its added accounts are billed per use and never take work over by themselves. Nor are Grok and
+ * Cursor, whose chats don't fork to another provider.
  */
 export const FALLBACK_ORDER: readonly Family[] = ["claude", "codex", "kimi", "copilot", "opencode"];
 
@@ -88,15 +94,15 @@ export function familyPhrase(families: readonly Family[] = FALLBACK_ORDER, joine
   return labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} ${joiner} ${labels.at(-1)}`;
 }
 
-/** The providers a `from` agent can carry on with, most preferred first; none for Pi or Grok. */
+/** The providers a `from` agent can carry on with, most preferred first; none for Pi, Grok or Cursor. */
 export function fallbackFamilies(from: Family): Family[] {
   return FALLBACK_ORDER.includes(from) ? FALLBACK_ORDER.filter((family) => family !== from) : [];
 }
 
 /**
  * Families not every Paseo user runs: one shows once its CLI login is registered (its CLI is there,
- * and for Grok a Paseo provider runs it) or an account of it was added, and its CLI is only missed
- * once an account of it was added.
+ * and for Grok and Cursor a Paseo provider runs it) or an account of it was added, and its CLI is only
+ * missed once an account of it was added.
  */
 export const OPTIONAL: Record<Family, boolean> = {
   claude: false,
@@ -106,6 +112,7 @@ export const OPTIONAL: Record<Family, boolean> = {
   opencode: false,
   pi: true,
   grok: true,
+  cursor: true,
 };
 
 /** The families the Accounts screen shows, given the accounts there are (the CLI logins registered included). */
@@ -115,8 +122,8 @@ export function shownFamilies(accounts: readonly { family: Family }[]): Family[]
 
 /**
  * For a provider whose conversations can't change accounts in place: one with history carries on in a
- * new agent on the account picked for it (Codex's). False for Grok's, which stay on their account
- * until moving them is known to work; only new agents follow a pick or the default.
+ * new agent on the account picked for it (Codex's). False for Grok's and Cursor's, which stay on their
+ * account until moving them is known to work; only new agents follow a pick or the default.
  */
 export const HAND_OFF: Record<Family, boolean> = {
   claude: true,
@@ -126,6 +133,7 @@ export const HAND_OFF: Record<Family, boolean> = {
   opencode: true,
   pi: true,
   grok: false,
+  cursor: false,
 };
 
 /** Stands for a proxy's password (or a user name with none) wherever the proxy is shown. */
@@ -265,11 +273,16 @@ export const AccountViewSchema = z.object({
   apiEditable: z.boolean().default(false),
   /** The account's own proxy, password hidden (as `HIDDEN`). Null when it uses whatever it inherits. */
   proxy: z.string().nullable().default(null),
-  /** A proxy can be set for this account here (Pi accounts, Pi's own login included). */
+  /** A proxy can be set for this account here (Claude and Pi accounts, their CLI logins included). */
   proxyEditable: z.boolean().default(false),
+  /** Why a proxy can't be set for it just now (the CLI login's, while main's settings would outrank it); null when one can. */
+  proxyBlocked: z.string().nullable().default(null),
   /** The proxy it goes through without one of its own, password hidden, and where that's set. */
   inheritedProxy: z.object({ proxy: z.string(), from: z.string() }).nullable().default(null),
-  /** The user's file its own proxy is kept in (Pi's own login: `httpProxy` in `~/.pi/agent/settings.json`). */
+  /**
+   * The user's file its own proxy is kept in (Pi's own login: `httpProxy` in `~/.pi/agent/settings.json`;
+   * Claude's CLI login: `env` in `~/.claude/settings.json`, when that sets one).
+   */
   proxyFile: z.string().nullable().default(null),
   /** Added accounts that go through the same proxy, having none of their own, while it's kept in `proxyFile`. */
   proxyFollowers: z.array(z.string()).default([]),

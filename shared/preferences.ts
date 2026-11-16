@@ -45,6 +45,13 @@ export const preferences = defineSettings({
      * another provider (Claude, ChatGPT, Kimi Code), in a mode no more permissive than the original's.
      */
     forkOtherProvider: z.boolean().default(false),
+    /**
+     * Off unless turned on. Two ChatGPT accounts in one workspace may keep a Codex conversation:
+     * a limit reloads that agent on the other account. Every other case, including a workspace
+     * that is out of credits, still opens a new tab. A failed resume puts the agent back and
+     * opens that tab.
+     */
+    codexSameConversation: z.boolean().default(false),
     /** Show the account pill in the composer of Claude and Codex agents. */
     showComposerPill: z.boolean().default(true),
   }),

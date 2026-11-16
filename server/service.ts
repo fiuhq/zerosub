@@ -42,9 +42,10 @@ import {
 } from "./adapter";
 import { FamilyResolver } from "./families";
 import { sameAccountIdentity, withoutWorkspace } from "./account-identity";
+import { codexHandoffMode, encryptedResumeFailure, sameWorkspace, turnFailedText } from "./codex-same-conversation";
 import { CodexContinuations } from "./continuations";
 import { CONTINUED_FROM_LABEL, continueInNewAgent, type Continuation } from "./handoff";
-import { PI_ACCOUNT_FILE, crossesInheritedProxy, isAccountHome, moveHome, normalizeBaseUrl, plainHttp, readPiAccount, readPiAccountForAgents, removeHome } from "./homes";
+import { PI_ACCOUNT_FILE, codexSessionsShared, crossesInheritedProxy, isAccountHome, moveHome, normalizeBaseUrl, plainHttp, readPiAccount, readPiAccountForAgents, removeHome } from "./homes";
 import { launcherNames, piLauncherDir, writeLaunchers, type LauncherAccount } from "./launchers";
 import { Mutex } from "./json-file";
 import { turnRows } from "./limits";
@@ -143,6 +144,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   autoRedeem: false,
   useCredits: false,
   forkOtherProvider: false,
+  codexSameConversation: false,
 };
 
 interface LoginSession {
@@ -213,9 +215,24 @@ interface Opening {
 }
 type Problem = { kind: "limit"; hit: LimitHit } | { kind: "signed_out" };
 
-/** Why a conversation of a provider without hand-off (Grok's) can't be given another account. */
+/** Why a conversation of a provider without hand-off (Grok's, Cursor's) can't be given another account. */
 function stays(family: Family, on: string | null): string {
   return `${FAMILY_LABEL[family]} conversations stay on the account they started on${on ? ` (${on})` : ""}. Start a new agent to use another account; new agents follow your pick and the default.`;
+}
+
+/** What a same-conversation reload has to put back if the other account cannot read the thread. */
+interface ConversationMemberPin {
+  chainId: string;
+  accountId: string;
+  identity: string | null;
+  email: string | null;
+}
+
+interface SameConversationProbe {
+  fromAccountId: string;
+  toAccountId: string;
+  previousBinding: Binding | undefined;
+  members: ConversationMemberPin[];
 }
 
 /**
@@ -322,6 +339,13 @@ export class Service {
   private readonly unrouted = new Set<string>();
   /** When each agent's last turn started or ended; see `noteTurn`. */
   private readonly turnAt = new Map<string, number>();
+  /**
+   * The account a Codex agent reloaded off, until the first turn after that reload ends. A decrypt
+   * or resume failure pins it back and opens today's new tab. Any other ending drops the record.
+   */
+  private readonly sameConversationProbe = new Map<string, SameConversationProbe>();
+  /** This agent already failed to resume on the other account, so the next limit uses a new tab. */
+  private readonly sameConversationBlocked = new Set<string>();
   private aligning = false;
   /**
    * Default changes pinning open agents right now. Until they're pinned, an agent that follows the
@@ -500,17 +524,17 @@ export class Service {
       if (now - (this.identityCheckedAt.get(account.id) ?? 0) > IDENTITY_MS) {
         void this.refreshIdentity(account.id).catch(() => undefined);
       }
-      if (now - (this.egressCheckedAt.get(account.id) ?? 0) >= EGRESS_MS) void this.checkEgress(account);
+      if (account.signedIn && now - (this.egressCheckedAt.get(account.id) ?? 0) >= EGRESS_MS) void this.checkEgress(account);
     }
     for (const [id, login] of this.logins) {
       if (login.finishedAt && now - login.finishedAt > LOGIN_TTL_MS) this.logins.delete(id);
       else if (!login.finishedAt && now - Date.parse(login.view.startedAt) > LOGIN_TTL_MS) void this.cancelLogin(id);
     }
-    // Keep added Pi homes in step with Pi's own directory (shared entries, sign-ins, settings) even
-    // when they're only used from a terminal, which ZeroSub never sees start.
+    // Keep added Claude and Pi homes in step with main (shared entries, generated settings; a Pi home's
+    // sign-ins too) even when they're only used from a terminal, which ZeroSub never sees start.
     for (const account of state.accounts) {
-      if (account.family === "pi" && account.kind === "managed" && account.home && !this.moving.has(account.id)) {
-        await this.adapters.pi
+      if ((account.family === "claude" || account.family === "pi") && account.kind === "managed" && account.home && !this.moving.has(account.id)) {
+        await this.adapters[account.family]
           .prepareHome(account.home, this.stillHas(account))
           .catch((error: unknown) => log(`could not refresh the home of ${account.label}`, error));
       }
@@ -971,6 +995,8 @@ export class Service {
     // meanwhile, and the limit is still this account's.
     const accountId = this.runningOn(await this.store.read(), agentId, family) ?? null;
     if (accountId) this.activeAt.set(accountId, endedAt);
+    if (event.outcome.kind === "completed") this.sameConversationBlocked.delete(agentId);
+    const probe = this.sameConversationProbe.get(agentId);
     // A turn on a model billed elsewhere says nothing about this account.
     if (adapter.ownsModel && !adapter.ownsModel((await agentInfo(context.paseo, agentId))?.model ?? null)) {
       if (this.deferred.has(agentId)) await this.finishDeferred(context.paseo, agentId, family);
@@ -978,6 +1004,14 @@ export class Service {
     }
     if (event.outcome.kind !== "canceled") {
       const turn = await this.turnWithTimeline(context.paseo, event);
+      if (probe && encryptedResumeFailure(turnFailedText(turn))) {
+        this.sameConversationProbe.delete(agentId);
+        this.sameConversationBlocked.add(agentId);
+        await this.revertSameConversation(context.paseo, agentId, family, probe, turn.timeline);
+        if (this.deferred.has(agentId)) await this.finishDeferred(context.paseo, agentId, family);
+        return;
+      }
+      if (probe) this.sameConversationProbe.delete(agentId);
       // A hand-off quotes the whole conversation, not just this turn. Paseo 0.13 sends none, so the hand-off pages it.
       const conversation = event.timeline.length > 0 ? event.timeline : undefined;
       const hit = adapter.detectLimit(turn);
@@ -996,6 +1030,7 @@ export class Service {
         return;
       }
     }
+    if (probe && event.outcome.kind === "canceled") this.sameConversationProbe.delete(agentId);
     if (this.deferred.has(agentId)) await this.finishDeferred(context.paseo, agentId, family);
     else if (accountId && event.outcome.kind === "completed") await this.switchEarly(context.paseo, agentId, family, accountId, horizon);
     // The turn just used the account: read its usage again as soon as the provider allows.
@@ -1044,6 +1079,8 @@ export class Service {
     this.alignedAt.delete(agentId);
     this.failedMoves.delete(agentId);
     this.unrouted.delete(agentId);
+    this.sameConversationProbe.delete(agentId);
+    this.sameConversationBlocked.delete(agentId);
     const ended = (session: LiveSession | undefined) => session !== undefined && Date.parse(session.openedAt) < closedAt;
     if (!ended((await this.store.read()).sessions[agentId])) return;
     await this.store.update((draft) => {
@@ -1057,6 +1094,8 @@ export class Service {
     this.failedMoves.delete(agentId);
     this.unrouted.delete(agentId);
     this.turnAt.delete(agentId);
+    this.sameConversationProbe.delete(agentId);
+    this.sameConversationBlocked.delete(agentId);
     this.switchGuard.forget(agentId);
     this.guardNoticeAt.delete(agentId);
     this.guardNoticeAt.delete(`${agentId}:elsewhere`);
@@ -1408,6 +1447,8 @@ export class Service {
       await this.appendRow(paseo, agentId, { ...base, to: account.label, reason: "exhausted", outcome: "stayed", detail });
       return;
     }
+
+    if (!adapter.portable && (await this.keptSameConversation(paseo, agentId, account, next, problem, base, reason, endedAt))) return;
 
     if (adapter.portable) {
       if (move?.pin) await this.pin(agentId, next.id, latest.bindings[agentId]);
@@ -1959,6 +2000,174 @@ export class Service {
     return result.fork;
   }
 
+  /**
+   * Reloads this Codex agent on `next` when both accounts are members of one workspace and `next`
+   * really links `sessions/`. One write updates the binding and this agent's continuation record,
+   * so a later handoff still sees one tab. A failed reload puts that write back and returns false,
+   * and the caller opens today's new tab.
+   */
+  private async keptSameConversation(
+    paseo: PaseoApi,
+    agentId: string,
+    account: StoredAccount,
+    next: StoredAccount,
+    problem: Problem,
+    base: Omit<SwitchRow, "to" | "reason" | "outcome">,
+    reason: SwitchRow["reason"],
+    endedAt: number,
+  ): Promise<boolean> {
+    if (problem.kind !== "limit" || account.family !== "codex" || next.family !== "codex") return false;
+    const eligible = codexHandoffMode({
+      enabled: this.prefs.codexSameConversation && !this.sameConversationBlocked.has(agentId),
+      sameWorkspace: sameWorkspace(account.identity, next.identity),
+      // The link is checked below, after the other gates, so a disabled option does not touch homes.
+      sessionsShared: true,
+      limitMessage: problem.hit.message,
+    });
+    if (eligible === "new-tab") return false;
+    await this.prepareSharedSessions(account);
+    await this.prepareSharedSessions(next);
+    if (!(await codexSessionsShared(next.home, account.home))) return false;
+
+    const seen = await this.store.read();
+    const previousBinding = seen.bindings[agentId];
+    const members = this.conversationPins(seen, agentId);
+    await this.store.update((draft) => {
+      draft.bindings[agentId] = { accountId: next.id, source: "auto", at: new Date().toISOString() };
+      for (const chain of Object.values(draft.continuations)) {
+        const member = chain.members[agentId];
+        if (!member) continue;
+        member.accountId = next.id;
+        member.identity = next.identity;
+        member.email = next.email;
+      }
+    });
+    const result = await this.reopenAgent(paseo, agentId, { settle: true, sameConversation: true });
+    const landed = (await this.store.read()).sessions[agentId]?.accountId === next.id;
+    if (result.outcome !== "reopened" || !landed) {
+      this.deferred.delete(agentId);
+      await this.restoreConversationPin(agentId, previousBinding, members);
+      return false;
+    }
+    this.switchGuard.note(agentId, Date.now());
+    this.sameConversationProbe.set(agentId, { fromAccountId: account.id, toAccountId: next.id, previousBinding, members });
+    const continued = this.prefs.autoContinue && (await this.untouchedSince(paseo, agentId, endedAt));
+    await this.appendRow(paseo, agentId, {
+      ...base,
+      to: next.label,
+      reason,
+      continued,
+      outcome: "switched",
+      sameConversation: true,
+    });
+    if (continued) await this.carryOn(paseo, agentId, endedAt);
+    return true;
+  }
+
+  /**
+   * Puts the agent back on the account that can read the thread, then hands off to the other as
+   * today: a new tab there, or only a note while Keep going after a switch is off.
+   */
+  private async revertSameConversation(
+    paseo: PaseoApi,
+    agentId: string,
+    family: Family,
+    probe: SameConversationProbe,
+    timeline: readonly AgentTimelineItem[] | undefined,
+  ): Promise<void> {
+    const release = await this.claim(agentId);
+    try {
+      await this.restoreConversationPin(agentId, probe.previousBinding, probe.members);
+      await this.reopenAgent(paseo, agentId, { settle: true, sameConversation: true });
+      const state = await this.store.read();
+      const from = findAccount(state, probe.fromAccountId);
+      const to = findAccount(state, probe.toAccountId);
+      if (!from || !to || family !== "codex") return;
+      if (!this.prefs.autoContinue) {
+        await this.appendRow(paseo, agentId, {
+          family,
+          from: from.label,
+          to: to.label,
+          reason: "limit",
+          resetsAt: from.limitedUntil,
+          continued: false,
+          continuedIn: null,
+          toFamily: null,
+          outcome: "stayed",
+          detail: `New ${FAMILY_LABEL[family]} agents will use ${to.label}.`,
+          at: new Date().toISOString(),
+        });
+        return;
+      }
+      const why = `its ChatGPT account (${from.label}) reached its usage limit, and ${to.label} could not resume the thread`;
+      try {
+        const continuation = await this.continueElsewhere(paseo, agentId, to, why, timeline, "auto");
+        await this.appendRow(paseo, agentId, {
+          family,
+          from: from.label,
+          to: to.label,
+          reason: "limit",
+          resetsAt: from.limitedUntil,
+          continued: true,
+          continuedIn: continuation,
+          toFamily: null,
+          outcome: "continued",
+          detail: `${to.label} could not resume this thread.`,
+          at: new Date().toISOString(),
+        });
+      } catch (error) {
+        log(`could not continue ${agentId} on ${to.label}`, error);
+        await this.appendRow(paseo, agentId, {
+          family,
+          from: from.label,
+          to: to.label,
+          reason: "limit",
+          resetsAt: from.limitedUntil,
+          continued: false,
+          continuedIn: null,
+          toFamily: null,
+          outcome: "stayed",
+          detail: `Couldn't continue on ${to.label}: ${describe(error)}`,
+          at: new Date().toISOString(),
+        });
+      }
+    } finally {
+      release();
+    }
+  }
+
+  private conversationPins(state: StoredState, agentId: string): ConversationMemberPin[] {
+    const pins: ConversationMemberPin[] = [];
+    for (const [chainId, chain] of Object.entries(state.continuations)) {
+      const member = chain.members[agentId];
+      if (!member) continue;
+      pins.push({ chainId, accountId: member.accountId, identity: member.identity, email: member.email });
+    }
+    return pins;
+  }
+
+  private async restoreConversationPin(agentId: string, binding: Binding | undefined, members: readonly ConversationMemberPin[]): Promise<void> {
+    await this.store.update((draft) => {
+      if (binding) draft.bindings[agentId] = binding;
+      else delete draft.bindings[agentId];
+      for (const pin of members) {
+        const member = draft.continuations[pin.chainId]?.members[agentId];
+        if (!member) continue;
+        member.accountId = pin.accountId;
+        member.identity = pin.identity;
+        member.email = pin.email;
+      }
+    });
+  }
+
+  /** Makes the shared session link before a same-conversation reload. A failed link only warns. */
+  private async prepareSharedSessions(account: StoredAccount): Promise<void> {
+    if (account.kind !== "managed" || !account.home || account.family !== "codex") return;
+    await this.adapters.codex.prepareHome(account.home, this.stillHas(account)).catch((error: unknown) =>
+      log(`could not refresh the home of ${account.label}`, error),
+    );
+  }
+
   private async continueElsewhere(
     paseo: PaseoApi,
     agentId: string,
@@ -2040,7 +2249,7 @@ export class Service {
   private async reopenAgent(
     paseo: PaseoApi,
     agentId: string,
-    options: { row?: SwitchRow | null; settle?: boolean; background?: boolean; unattended?: boolean } = {},
+    options: { row?: SwitchRow | null; settle?: boolean; background?: boolean; unattended?: boolean; sameConversation?: boolean } = {},
   ): Promise<ReopenResult> {
     const { row = null, settle = false, background = false, unattended = background } = options;
     let info: AgentInfo | null;
@@ -2061,7 +2270,9 @@ export class Service {
     const state = await this.store.read();
     // A thread whose session opened without ZeroSub (on the CLI login) belongs to the account it's
     // pinned to, which holds its history, so it reopens there.
-    if (family && !this.adapters[family].portable && info.hasHistory && (state.sessions[agentId] || !state.bindings[agentId])) {
+    // A same-conversation reload already pinned this thread to the other account. This guard would
+    // pin it back to the session it is leaving, so that one reload skips it.
+    if (!options.sameConversation && family && !this.adapters[family].portable && info.hasHistory && (state.sessions[agentId] || !state.bindings[agentId])) {
       // The thread gained history while waiting, so it can no longer change accounts: keep it put.
       const current = this.runningOn(state, agentId, family);
       if (current && findAccount(state, current)) {
@@ -2512,7 +2723,8 @@ export class Service {
         const adapter = this.adapters[account.family];
         // A home of null is the CLI's own login; its files are only read here.
         if (adapter.proxyState && (account.kind === "main" || account.home)) {
-          proxies.set(account.id, await adapter.proxyState(account.home).catch((): ProxyState => ({ own: null, file: null, inherited: null })));
+          const unknown = (error: unknown): ProxyState => ({ own: null, file: null, inherited: null, blocked: describe(error) });
+          proxies.set(account.id, await adapter.proxyState(account.home).catch(unknown));
         }
         if (account.kind === "main" && adapter.mainApi && adapter.api) apis.set(account.id, await adapter.api(null).catch(() => null));
         if (account.kind !== "managed" || !account.home) return;
@@ -2558,6 +2770,7 @@ export class Service {
         apiEditable: account.auth === "api" || (account.kind === "main" && this.adapters[account.family].mainApi === true),
         proxy: proxy?.own ? maskProxy(proxy.own) : null,
         proxyEditable: proxy !== undefined,
+        proxyBlocked: proxy?.blocked ?? null,
         inheritedProxy: proxy?.inherited ? { ...proxy.inherited, proxy: maskProxy(proxy.inherited.proxy) } : null,
         proxyFile: proxy?.file ?? null,
         proxyFollowers: proxy?.file ? followers(account.family) : [],
@@ -2611,7 +2824,7 @@ export class Service {
     const state = await this.store.read();
     for (const family of FAMILIES) {
       const availability = this.availability.get(family);
-      // An optional provider (Pi, Grok) is only missed once an account of it was added.
+      // An optional provider (Pi, Grok, Cursor) is only missed once an account of it was added.
       if (OPTIONAL[family] && !state.accounts.some((account) => account.family === family && account.kind === "managed")) continue;
       if (availability && !availability.ok) {
         warnings.push(
@@ -2624,6 +2837,21 @@ export class Service {
         const setup = await this.adapters[family].setupWarning?.().catch(() => null);
         if (setup) warnings.push(setup);
       }
+    }
+    // Only once Grok is on the Accounts screen (its CLI login registered or an account of it added), like `shownFamilies`.
+    const grokSignIn = process.env.GROK_AUTH_PROVIDER_COMMAND || (process.env.GROK_OIDC_ISSUER && process.env.GROK_OIDC_CLIENT_ID);
+    if (grokSignIn && state.accounts.some((account) => account.family === "grok")) {
+      warnings.push(
+        "The daemon's environment sets a Grok sign-in (GROK_AUTH_PROVIDER_COMMAND, or GROK_OIDC_ISSUER and GROK_OIDC_CLIENT_ID). Grok agents on your CLI login use it; added Grok accounts don't, so one that can only sign in that way may fail to sign in or stay signed in.",
+      );
+    }
+    // Only once Cursor is on the Accounts screen (its CLI login registered or an account of it added), like `shownFamilies`.
+    const cursorLogin = ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN"].filter((key) => process.env[key]);
+    if (cursorLogin.length > 0 && state.accounts.some((account) => account.family === "cursor")) {
+      const it = cursorLogin.length > 1 ? "them" : "it";
+      warnings.push(
+        `The daemon's environment sets ${cursorLogin.join(" and ")}. Cursor agents on your CLI login use ${it}, and cursor-agent saves ${it} as that login; added Cursor accounts don't.`,
+      );
     }
     if (!(await this.canReopen(this.paseo))) {
       warnings.push(
@@ -2930,7 +3158,7 @@ export class Service {
     const account = findAccount(state, accountId);
     if (!account) throw new Error("That account no longer exists.");
     if (account.kind === "main") {
-      throw new Error("Your CLI login can't be removed here. Sign out with `claude auth logout`, `codex logout`, `grok logout` or Pi's /logout instead.");
+      throw new Error("Your CLI login can't be removed here. Sign out with `claude auth logout`, `codex logout`, `grok logout`, `cursor-agent logout` or Pi's /logout instead.");
     }
     if (!this.adapters[account.family].portable) {
       // These conversations can't move to another ChatGPT account, so removing theirs would strand them.
@@ -3047,22 +3275,29 @@ export class Service {
   }
 
   /**
-   * Sets an account's proxy; an empty value clears it. Processes started afterwards use it. Pi's own
-   * login's is kept in Pi's own settings, changed there only when asked to here.
+   * Sets an account's proxy; an empty value clears it. Processes started afterwards use it. The CLI
+   * login's is kept in the user's own settings when they set one (Pi's in Pi's settings, Claude's
+   * in `~/.claude/settings.json`), changed there only when asked to here.
    */
   async setProxy(accountId: string, input: string): Promise<string | null> {
-    const { account, proxy } = await this.onAccount(accountId, async (account) => {
+    const { account, proxy, kept } = await this.onAccount(accountId, async (account) => {
       if (!account) throw new Error("That account no longer exists.");
       const adapter = this.adapters[account.family];
-      const main = account.kind === "main" && adapter.mainApi === true;
-      if (!adapter.setProxy || !(main || (account.kind === "managed" && account.home))) throw new Error("A proxy can only be set for Pi accounts.");
+      const main = account.kind === "main";
+      if (!adapter.setProxy || !(main || (account.kind === "managed" && account.home))) throw new Error("A proxy can only be set for Claude and Pi accounts.");
       const proxy = input.trim() ? normalizeProxy(input) : null;
-      if (main && proxy && proxy !== (await adapter.proxyState?.(null))?.own) await this.refuseClearTextFollowers(account.family);
+      const kept = main ? await adapter.proxyState?.(null).catch(() => null) : null;
+      if (main && account.family === "pi" && proxy && proxy !== kept?.own) await this.refuseClearTextFollowers(account.family);
       await adapter.setProxy(main ? null : account.home, proxy, this.stillHas(account));
-      return { account, proxy };
+      return { account, proxy, kept };
     });
-    if (account.kind === "main") await this.followMainSettings(account.family);
-    else void this.checkEgress(account);
+    if (account.kind === "main" && account.family === "pi") {
+      await this.followMainSettings(account.family);
+    } else {
+      void this.checkEgress(account);
+      // The CLI login's proxy kept in main's settings is every added account's without one of its own.
+      if (account.kind === "main" && kept?.file) void this.followMainSettings(account.family);
+    }
     return proxy ? maskProxy(proxy) : null;
   }
 
@@ -3106,16 +3341,18 @@ export class Service {
   }
 
   /**
-   * Checks where an added account's requests come from; a failed check keeps the last address it
-   * saw. The CLI login is never checked, so nothing is sent while no account is added.
+   * Checks where an account's requests come from; a failed check keeps the last address it saw.
+   * Pi's own login is never checked: only an added Pi account's requests are ZeroSub's to place, so
+   * nothing is sent while none is added. Claude's CLI login is, as its proxy can be set here too.
    */
   private async checkEgress(account: StoredAccount): Promise<void> {
     const adapter = this.adapters[account.family];
-    if (!adapter.egress || account.kind !== "managed" || !account.home || !account.signedIn) return;
+    if (!adapter.egress || !account.signedIn) return;
+    if (account.kind === "main" ? account.family !== "claude" : !account.home) return;
     this.egressCheckedAt.set(account.id, Date.now());
     const checkedAt = new Date().toISOString();
     try {
-      const seen = await this.onAccount(account.id, async (current) => (current?.home ? adapter.egress!(current.home) : null));
+      const seen = await this.onAccount(account.id, async (current) => (current?.home || current?.kind === "main" ? adapter.egress!(current.home) : null));
       if (seen) this.egress.set(account.id, { ...seen, checkedAt, error: null });
       else this.egress.delete(account.id);
     } catch (error) {
@@ -3567,11 +3804,11 @@ export class Service {
 
   // ------------------------------------------------------------------ RPC: sign-in
 
-  startLogin(family: Family, method: LoginMethod, accountId?: string): Promise<LoginView> {
-    return this.loginLocks[family].run(() => this.beginLogin(family, method, accountId));
+  startLogin(family: Family, method: LoginMethod, accountId?: string, proxy?: string): Promise<LoginView> {
+    return this.loginLocks[family].run(() => this.beginLogin(family, method, accountId, proxy));
   }
 
-  private async beginLogin(family: Family, method: LoginMethod, accountId?: string): Promise<LoginView> {
+  private async beginLogin(family: Family, method: LoginMethod, accountId?: string, proxyInput?: string): Promise<LoginView> {
     // Pi's added accounts are API keys, and its own login signs in inside Pi.
     if (family === "pi") throw new Error("Pi accounts use an Anthropic API key: add one with Add account, or change its key from its card. Sign Pi's own login in with /login inside Pi.");
     let availability = this.availability.get(family);
@@ -3587,6 +3824,9 @@ export class Service {
     const state = await this.store.read();
     const existing = accountId ? findAccount(state, accountId) : undefined;
     if (accountId && (!existing || existing.family !== family)) throw new Error("That account no longer exists.");
+    // A new account's proxy is in place before the CLI starts, so the sign-in itself goes through it.
+    const proxy = !existing && proxyInput?.trim() ? normalizeProxy(proxyInput) : null;
+    if (proxy && !this.adapters[family].setProxy) throw new Error(`A proxy can't be set for ${FAMILY_LABEL[family]} accounts yet.`);
 
     const id = randomBytes(6).toString("hex");
     const home = existing ? existing.home : join(homesDir(), `${family}-${id}`);
@@ -3620,6 +3860,7 @@ export class Service {
           draft.cleanup[home] = { family, accountId: `${family}-${id}`, why: "unfinished", at: new Date().toISOString() };
         });
       }
+      if (home && proxy) await this.adapters[family].setProxy?.(home, proxy);
       if (home) await this.adapters[family].prepareHome(home);
       const handle = await this.adapters[family].login(home, method);
       if (session.finishedAt) {
