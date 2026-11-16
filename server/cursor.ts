@@ -171,11 +171,9 @@ export class CursorAdapter implements FamilyAdapter {
     return null;
   }
 
-  environmentWarning(env: NodeJS.ProcessEnv): string | null {
-    const set = OVERRIDING_AUTH.filter((key) => env[key]);
-    return set.length > 0
-      ? `The daemon's environment sets ${set.join(" and ")}. Cursor agents on your CLI login use it; agents on added accounts use their own sign-in.`
-      : null;
+  /** The service warns about a key or token in the daemon's environment once Cursor is on the Accounts screen. */
+  environmentWarning(): string | null {
+    return null;
   }
 }
 

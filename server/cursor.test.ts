@@ -468,6 +468,15 @@ describe("Cursor accounts and the daemon's environment", () => {
     expect((await shown.service.view(paseoWith(false) as never)).warnings).toEqual(warning);
     await shown.service.stop();
   });
+
+  it("warns once when an added Cursor account is on the Accounts screen", async () => {
+    process.env.CURSOR_API_KEY = "key_daemon";
+    const { service } = await cursorService([cursorAccount("cursor-a", "managed")], new CursorAdapter("linux"));
+    await service.start();
+    const warnings = (await service.view(paseoWith(false) as never)).warnings;
+    expect(warnings.filter((warning) => warning.includes("CURSOR_API_KEY"))).toHaveLength(1);
+    await service.stop();
+  });
 });
 
 describe("Cursor on macOS and Windows", () => {
