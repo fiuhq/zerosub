@@ -90,6 +90,23 @@ A new workspace has no agent yet, so its message box has no account button. To c
   - A sub-agent (one another agent started) keeps its parent: its new tab goes under the same agent, or under the tab where that agent's own task now continues. Like the first tab, it's archived with the parent and sends no notifications of its own. Paseo doesn't tell the parent when the new tab finishes, though: it only reports to an agent on agents it started or prompted itself.
   - ZeroSub never sends a hand-off twice. If a lost connection leaves one unconfirmed, the switch stops and names the tab to check. Continuation agents from earlier versions are picked up on the first switch. New Codex agents simply start on the chosen account.
 
+### Keep a Codex chat in the same conversation (optional)
+
+Off by default. Turn on **Keep a Codex chat in the same conversation** for two ChatGPT accounts that are members of one workspace (`chatgpt|<workspace>|<email>`). A usage limit then reloads the same agent on the other account. That tab is the only one writing the thread: ZeroSub does not resume it from a second tab. Before the reload, it checks that the other account's home links `sessions/` to the same session directory. A plain `sessions` folder does not count. On Windows a failed junction is only a warning, and that account keeps the new tab.
+
+These still open a new tab:
+
+- the option is off
+- the accounts are in different workspaces
+- an account is known only as `chatgpt-email|…`
+- the limit says the workspace is out of credits
+- the other home does not link `sessions/`
+- the first turn after the switch fails because the thread cannot be decrypted or resumed (`invalid_encrypted_content`, `organization_id mismatch`)
+
+That last failure puts the agent back on the previous account, in the same write as its continuation record, and opens today's continuation tab.
+
+On 2026-11-15, my fork continued one conversation from member A to member B of the same workspace on macOS 27.0.1 with Codex 0.167.0. That hop was a workspace credit limit, which this option still opens in a new tab. The run did not cover a second workspace or an email-only identity.
+
 ### Kimi Code
 
 - Install [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) where the daemon runs (the archived Python Kimi CLI isn't supported). Your existing login in `~/.kimi-code` (or `KIMI_CODE_HOME`) shows up as the CLI login.
@@ -112,22 +129,6 @@ A new workspace has no agent yet, so its message box has no account button. To c
 - OpenCode uses a Go key saved in OpenCode itself before the one ZeroSub passes in. Your CLI login is that saved key; to let ZeroSub pick the Go account per agent, add the key here as an account too and disconnect OpenCode Go in OpenCode (`/connect`). ZeroSub says so while both exist.
 - The `opencode` provider also runs other providers' models. Only turns on `opencode-go/…` models count towards a Go account's limits.
 - OpenCode Go shows usage only in the OpenCode Console, so cards show no usage and switch early doesn't apply. A turn that ends on OpenCode's usage-limit message switches accounts; a bare rate limit doesn't.
-### Keep a Codex chat in the same conversation (optional)
-
-Off by default. Turn on **Keep a Codex chat in the same conversation** for two ChatGPT accounts that are members of one workspace (`chatgpt|<workspace>|<email>`). A usage limit then reloads the same agent on the other account. That tab is the only one writing the thread: ZeroSub does not resume it from a second tab. Before the reload, it checks that the other account's home links `sessions/` to the same session directory. A plain `sessions` folder does not count. On Windows a failed junction is only a warning, and that account keeps the new tab.
-
-These still open a new tab:
-
-- the option is off
-- the accounts are in different workspaces
-- an account is known only as `chatgpt-email|…`
-- the limit says the workspace is out of credits
-- the other home does not link `sessions/`
-- the first turn after the switch fails because the thread cannot be decrypted or resumed (`invalid_encrypted_content`, `organization_id mismatch`)
-
-That last failure puts the agent back on the previous account, in the same write as its continuation record, and opens today's continuation tab.
-
-On 2026-11-15, my fork continued one conversation from member A to member B of the same workspace on macOS 27.0.1 with Codex 0.167.0. That hop was a workspace credit limit, which this option still opens in a new tab. The run did not cover a second workspace or an email-only identity.
 
 ### Banked resets
 
