@@ -180,7 +180,7 @@ export class CopilotAdapter implements FamilyAdapter {
 
   async login(home: string | null, _method: LoginMethod): Promise<LoginHandle> {
     const { command, prefix } = await providerCommand("copilot");
-    const env = spawnEnv(await this.env(home));
+    const env = spawnEnv(await this.env(home), "copilot");
     // With a token variable set, `copilot login` would sign in with that token instead.
     for (const key of TOKEN_KEYS) delete env[key];
     const quiet = await quietOpenerDir();

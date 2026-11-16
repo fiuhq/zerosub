@@ -3,7 +3,7 @@ import { Icon, Modal, TextInput, useToast } from "@getpaseo/plugin/client/react-
 import { SettingsCard, SettingsSwitch } from "@getpaseo/plugin/client/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
-import { accountSubtitle, describeReopen, formatAge, formatCredits, formatExtraUsage, formatPlan, staleNotice, usageSummary } from "../shared/format";
+import { accountSubtitle, describeReopen, egressText, formatAge, formatCredits, formatExtraUsage, formatPlan, staleNotice, usageSummary } from "../shared/format";
 import { FALLBACK_ORDER, FAMILY_HEADING, FAMILY_LABEL, FAMILY_PORTABLE, HAND_OFF, familyPhrase, shownFamilies, type AccountView, type Family, type StateView } from "../shared/model";
 import { preferences } from "../shared/preferences";
 import {
@@ -48,8 +48,8 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
   // Keep usage moving while the screen is open.
   useEffect(() => store.watch(VISIBLE_POLL_MS), [store]);
 
-  // An optional provider (Pi, Grok) shows once its CLI login is registered (its CLI is there, and for
-  // Grok a Paseo provider runs it) or an account of it was added.
+  // An optional provider (Pi, Grok, Cursor) shows once its CLI login is registered (its CLI is there,
+  // and for Grok and Cursor a Paseo provider runs it) or an account of it was added.
   const families = shownFamilies(state?.accounts ?? []);
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.surface0 }}>
@@ -81,7 +81,7 @@ export function AccountsSurface(props: PluginSurfaceProps & { store: ZeroSubStor
             ) : null}
           </View>
           <Text style={text.muted}>
-            Keep several {familyPhrase([...FALLBACK_ORDER, "grok"])} accounts signed in, and run Pi on several Anthropic API keys.
+            Keep several {familyPhrase([...FALLBACK_ORDER, "grok", "cursor"])} accounts signed in, and run Pi on several Anthropic API keys.
             Each agent uses one; when a {familyPhrase(FALLBACK_ORDER, "or")} account runs out, agents move to the one whose spare
             quota runs out soonest and keep going.
           </Text>
@@ -310,7 +310,7 @@ function AccountCard({
   const [editingApi, setEditingApi] = useState(false);
   const [editingProxy, setEditingProxy] = useState(false);
   const api = account.auth === "api";
-  const details = piCardDetails(account);
+  const details = piCardDetails(account) ?? claudeCardDetails(account);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const resets = account.usage?.resets ?? null;
@@ -936,6 +936,13 @@ function AutomationSettings({ theme }: { theme: Theme }) {
           disabled={settings.saving || !settings.values.autoSwitch}
           onValueChange={(forkOtherProvider) => save({ forkOtherProvider })}
         />
+        <SettingsSwitch
+          label="Keep a Codex chat in the same conversation"
+          hint="Off unless you turn it on. Two ChatGPT accounts in one workspace reload this agent on the other account instead of opening a new tab. A different workspace, an email-only account, or a workspace that is out of credits still opens a new tab. If the first turn cannot resume the thread, this agent goes back and the new tab opens."
+          value={settings.values.codexSameConversation}
+          disabled={settings.saving || !settings.values.autoSwitch}
+          onValueChange={(codexSameConversation) => save({ codexSameConversation })}
+        />
       </SettingsCard>
       {settings.saveError ? <Text style={text.danger}>{settings.saveError}</Text> : null}
     </View>
@@ -943,6 +950,13 @@ function AutomationSettings({ theme }: { theme: Theme }) {
 }
 
 /** Paseo stopped waiting for a change that moves agents; the daemon carries on with it. */
+/** A Claude card's line about its network: its own proxy and the address Anthropic sees its requests come from. */
+function claudeCardDetails(account: AccountView): string | null {
+  if (account.family !== "claude") return null;
+  const parts = [account.proxy ? `Via ${account.proxy}` : null, egressText(account.egress)].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function stillMoving(label: string): string {
   return `Still moving agents for ${label}. Their timelines say when each has switched.`;
 }
