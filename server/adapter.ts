@@ -1,6 +1,7 @@
 import type { PluginLifecycleEvents, PluginTurnOutcome } from "@getpaseo/plugin/server";
 import type { ApiSummary, Family, LoginMethod, LoginStep, Usage } from "../shared/model";
 import type { RedeemOutcome } from "../shared/rpc";
+import type { ApiConfig } from "./homes";
 import { providerEnv } from "./provider-env";
 
 /**
@@ -128,17 +129,24 @@ export interface FamilyAdapter {
   login(home: string | null, method: LoginMethod): Promise<LoginHandle>;
   logout(home: string): Promise<void>;
   /**
-   * Only for providers whose added accounts are API keys (Pi's): an account's key (reduced to a hint)
-   * and base URL; `home === null` (the CLI login) only where `mainApi` says so.
+   * An API account's key (reduced to a hint), base URL and, for Claude, its key kind and traffic
+   * switches; null for a subscription login. `home === null` (the CLI login) only where `mainApi` says so.
    */
   api?(home: string | null): Promise<ApiSummary | null>;
   /** The CLI login's Anthropic key and base URL can be set here too. */
   readonly mainApi?: boolean;
   /**
-   * Stores an account's key (`null` keeps the current one) and base URL. `wanted`, if given, is asked
-   * once nothing else works on the home; false throws and writes nothing.
+   * Stores an API account's key (`null` keeps the current one), base URL and, for Claude, key kind
+   * and traffic switches. `wanted`, if given, is asked once nothing else works on the home; false
+   * throws and writes nothing.
    */
-  setApi?(home: string | null, config: { key: string | null; baseUrl: string | null }, wanted?: () => Promise<boolean>): Promise<void>;
+  setApi?(home: string | null, config: ApiConfig, wanted?: () => Promise<boolean>): Promise<void>;
+  /**
+   * The proxy an added account's requests to `baseUrl` would cross as plain http:// (`through`: as
+   * if it were that one), which could read its key; null when none would. For providers whose API
+   * accounts keep their key in the home's settings (Claude's; Pi checks its own when it writes).
+   */
+  clearTextProxy?(home: string, baseUrl: string | null, through?: string): Promise<string | null>;
   /**
    * Where an account's CLI (`home === null`: the CLI's own login) gets its proxy, for providers that
    * let ZeroSub set one per account (Claude's and Pi's).
@@ -153,6 +161,27 @@ export interface FamilyAdapter {
    * it (see `Service.placeHomes`). Providers that have it keep added accounts' homes outside `homes/`.
    */
   homesInUse?(homes: readonly string[]): Promise<Set<string>>;
+  /**
+   * Whether `home` holds an account's sign-in or key: what a folder made again by a sync, or by the
+   * CLI started on it, lacks. Tells which of two folders an interrupted move left is the account.
+   */
+  holdsAccount?(home: string): Promise<boolean>;
+  /**
+   * Before a home's folder moves from `from` to `to`: copies what the CLI keeps for it outside the
+   * folder (Claude's Keychain entry on macOS) to where it looks for `to`'s, and checks the copy.
+   * Nothing to do where the sign-in lives in the folder. Repeating it after it worked does nothing.
+   */
+  copyCredentials?(from: string, to: string): Promise<void>;
+  /**
+   * Undoes `copyCredentials` for a move that didn't happen: removes `to`'s copy, but only while it's
+   * the same as `from`'s, so an entry that was there before is never touched.
+   */
+  dropCopiedCredentials?(from: string, to: string): Promise<void>;
+  /**
+   * Once the account's home is saved as `to`: removes `from`'s copy, but only while `to` holds a
+   * sign-in of its own, so the account's login is never left nowhere. False when it left `from`'s.
+   */
+  dropOldCredentials?(from: string, to: string): Promise<boolean>;
   /** Looks for a subscription usage-limit failure in a finished turn. */
   detectLimit(event: TurnEvent): LimitHit | null;
   /** Looks for a turn that failed because the account's login is no longer valid. */

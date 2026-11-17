@@ -217,19 +217,44 @@ export type AccountKind = z.infer<typeof AccountKindSchema>;
 export const AuthKindSchema = z.enum([
   /** Signed in with a Claude or ChatGPT subscription (or, for Pi's own login, whatever Pi is signed in to). */
   "subscription",
-  /** An added Pi account: an Anthropic API key, billed per use, so never picked automatically. */
+  /**
+   * An API key or token (a Claude account's, optionally against another base URL; an added Pi
+   * account's Anthropic key), billed per use, so never picked automatically.
+   */
   "api",
 ]);
 export type AuthKind = z.infer<typeof AuthKindSchema>;
 
+export const ApiKeyKindSchema = z.enum([
+  /** `ANTHROPIC_API_KEY`, sent as `x-api-key`. */
+  "api_key",
+  /** `ANTHROPIC_AUTH_TOKEN`, sent as `Authorization: Bearer`. */
+  "auth_token",
+]);
+export type ApiKeyKind = z.infer<typeof ApiKeyKindSchema>;
+
+/** Claude Code's own switches for a Claude API account; each is off unless the user turns it on. */
+export const TrafficSwitchesSchema = z.object({
+  /** `DISABLE_TELEMETRY`. */
+  disableTelemetry: z.boolean().default(false),
+  /** `DISABLE_ERROR_REPORTING`. */
+  disableErrorReporting: z.boolean().default(false),
+  /** `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`: everything not needed to talk to the model. */
+  disableNonessentialTraffic: z.boolean().default(false),
+});
+export type TrafficSwitches = z.infer<typeof TrafficSwitchesSchema>;
+
 /** An API key's settings as shown in the app; the key itself never leaves the host. */
-export const ApiSummarySchema = z.object({
+export const ApiSummarySchema = TrafficSwitchesSchema.extend({
+  /** Left out by providers whose accounts only take an API key (Pi's). */
+  keyKind: ApiKeyKindSchema.default("api_key"),
   /** The key's last four characters, or empty for a key too short to show any of it. */
   keyHint: z.string(),
   /** Where Anthropic's requests go, or null for Anthropic's own API. */
   baseUrl: z.string().nullable(),
 });
-export type ApiSummary = z.infer<typeof ApiSummarySchema>;
+/** As an adapter gives it: the kind and switches may be left out, and are filled in for the client. */
+export type ApiSummary = z.input<typeof ApiSummarySchema>;
 
 /** The address an account's requests come from, as the provider's edge sees it. */
 export const EgressSchema = z.object({
@@ -269,7 +294,7 @@ export const AccountViewSchema = z.object({
   auth: AuthKindSchema.default("subscription"),
   /** An added Pi account's key (reduced to a hint) and base URL, and Pi's own login's while it keeps an Anthropic key. */
   api: ApiSummarySchema.nullable().default(null),
-  /** Its Anthropic key and base URL can be changed from its card (Pi accounts, Pi's own login included). */
+  /** Its key and base URL can be changed from its card (API accounts, and Pi's own login). */
   apiEditable: z.boolean().default(false),
   /** The account's own proxy, password hidden (as `HIDDEN`). Null when it uses whatever it inherits. */
   proxy: z.string().nullable().default(null),
@@ -286,7 +311,7 @@ export const AccountViewSchema = z.object({
   proxyFile: z.string().nullable().default(null),
   /** Added accounts that go through the same proxy, having none of their own, while it's kept in `proxyFile`. */
   proxyFollowers: z.array(z.string()).default([]),
-  /** Command (a script in `StateView.piLaunchers`) that starts the CLI on this account. */
+  /** Command (a script in `StateView.launchers` or `StateView.piLaunchers`) that starts the CLI on this account. */
   launcher: z.string().nullable().default(null),
   /** Where the account's requests come from, as Anthropic sees them; null when unknown or not Anthropic. */
   egress: EgressSchema.nullable().default(null),
@@ -377,10 +402,14 @@ export const StateViewSchema = z.object({
    * and daemons started over SSH, where only the code sign-in works.
    */
   browserSignIn: z.boolean().default(true),
+  /** Directory with a `claude-<account>.sh` script per added Claude account, to put on `PATH`. */
+  launchers: z.string().nullable().default(null),
   /** Directory with a `pi-<account>.sh` script per added Pi account, to put on `PATH`. */
   piLaunchers: z.string().nullable().default(null),
   /** The folder added Pi accounts' homes are kept in (`~/.pi-config`, say), and whether it's the default. */
   piHomes: z.object({ dir: z.string(), isDefault: z.boolean() }).nullable().default(null),
+  /** The folder added Claude accounts' homes are kept in (`~/.claude-config`, say), and whether it's the default. */
+  claudeHomes: z.object({ dir: z.string(), isDefault: z.boolean() }).nullable().default(null),
   showComposerPill: z.boolean(),
   /** Accounts at their limit are skipped, so agents can't be moved onto one by hand either. */
   autoSwitch: z.boolean().default(true),
