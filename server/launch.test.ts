@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Usage } from "../shared/model";
 import { preferences } from "../shared/preferences";
-import { earlyLines, launchAccount, settledAccount, shellExports } from "./launch";
+import { earlyLines, launchAccount, readState, settledAccount, shellExports } from "./launch";
 import { emptyState, type StoredAccount, type StoredState } from "./state";
 
 const NOW = Date.parse("2026-10-29T04:30:00Z");
@@ -81,6 +81,20 @@ describe("settledAccount", () => {
     const settled = await settledAccount(moving, "claude-a", async () => reads.shift()!, { pause: async () => void (pauses += 1) });
     expect(settled.home).toBe(to);
     expect(pauses).toBe(2);
+  });
+
+  it("sees state.json as the service rewrites it once the move is done", async () => {
+    const root = scratch();
+    const from = join(root, "homes", "claude-a");
+    const to = join(root, "claude-config", "claude-a");
+    mkdirSync(to, { recursive: true });
+    const file = join(root, "state.json");
+    const moving = state([account({ id: "claude-a", home: from })], { moves: { "claude-a": { from, to, at: "2026-11-17T00:00:00Z" } } });
+    writeFileSync(file, JSON.stringify(moving));
+    const read = readState(file);
+    const first = await read();
+    const pause = async () => writeFileSync(file, JSON.stringify(state([account({ id: "claude-a", home: to })])));
+    expect((await settledAccount(first, "claude-a", read, { attempts: 3, pause })).home).toBe(to);
   });
 
   it("launches at once on a home that is there, and on the CLI login, which has none", async () => {

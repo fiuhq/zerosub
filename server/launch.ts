@@ -50,6 +50,9 @@ export function launchAccount(
   );
 }
 
+/** state.json as it is on disk now: a store caches its first read, so each read opens a new one. */
+export const readState = (path: string) => () => new StateStore(path, { readOnly: true }).read();
+
 /**
  * The account once its home has stopped moving: no move of it on record and its folder on disk,
  * re-read from `read` after each `pause` for up to `attempts` reads. Throws when it never settles.
@@ -90,11 +93,11 @@ async function readPreferences(): Promise<Preferences> {
 async function main(): Promise<void> {
   const family = (process.argv[2] ?? "claude") as Family;
   if (family !== "claude") throw new Error(`zerosub launch: only claude is supported, got ${family}`);
-  const store = new StateStore(statePath(), { readOnly: true });
-  const state = await store.read();
+  const read = readState(statePath());
+  const state = await read();
   const chosen = launchAccount(state, await loadReadings(), await readPreferences(), family, Date.now());
   if (!chosen) throw new Error("zerosub launch: ZeroSub has no Claude account to route to");
-  const account = await settledAccount(state, chosen.id, () => store.read());
+  const account = await settledAccount(state, chosen.id, read);
   // Said on stderr so the caller's log names the account; stdout is only the env to apply.
   console.error(`[ZeroSub] launch → ${account.label}`);
   console.log(shellExports(await new ClaudeAdapter().env(account.home)));
