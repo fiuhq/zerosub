@@ -111,14 +111,21 @@ export const CleanupSchema = z.object({
 });
 export type Cleanup = z.infer<typeof CleanupSchema>;
 
-export const PiHomesSchema = z.object({
+/**
+ * Where a family's added accounts' homes are kept: `dir` (null for the default, beside their
+ * scripts), and folders picked before whose accounts still move to it.
+ */
+export const HomesSchema = z.object({
   dir: z.string().nullable().default(null),
   from: z.array(z.string()).default([]),
 });
-export type PiHomes = z.infer<typeof PiHomesSchema>;
+export type Homes = z.infer<typeof HomesSchema>;
 
-/** A home being moved, written before anything moves, so a move cut short is finished from here. */
-export const MoveSchema = z.object({ from: z.string(), to: z.string(), at: z.string() });
+/**
+ * A home being moved, written before anything moves, so a move cut short is finished from here.
+ * `family`: whose home it is (missing in records of earlier versions; the account says whose).
+ */
+export const MoveSchema = z.object({ from: z.string(), to: z.string(), at: z.string(), family: FamilySchema.optional() });
 export type Move = z.infer<typeof MoveSchema>;
 
 export const StoredStateSchema = z.object({
@@ -140,7 +147,9 @@ export const StoredStateSchema = z.object({
   /** The one-time "next new agent" pick of each family, by family. */
   nextAgent: z.record(z.string(), NextAgentPickSchema.nullable()).default({}),
   /** Where added Pi accounts' homes are kept: `dir` (null: `~/.pi-config`), and folders picked before whose accounts still move to it. */
-  piHomes: PiHomesSchema.default({ dir: null, from: [] }),
+  piHomes: HomesSchema.default({ dir: null, from: [] }),
+  /** Where added Claude accounts' homes are kept, as for Pi's (`dir` null: `~/.claude-config`). */
+  claudeHomes: HomesSchema.default({ dir: null, from: [] }),
   /** Homes being moved, by account (see `Service.placeHomes`). */
   moves: z.record(z.string(), MoveSchema).default({}),
 });
@@ -192,7 +201,8 @@ export function salvageState(raw: unknown): { state: StoredState; dropped: boole
         .filter((entry): entry is ProjectRule => entry !== undefined),
       cleanup: records(CleanupSchema, source.cleanup),
       nextAgent: {},
-      piHomes: keep(PiHomesSchema, source.piHomes ?? {}) ?? { dir: null, from: [] },
+      piHomes: keep(HomesSchema, source.piHomes ?? {}) ?? { dir: null, from: [] },
+      claudeHomes: keep(HomesSchema, source.claudeHomes ?? {}) ?? { dir: null, from: [] },
       moves: records(MoveSchema, source.moves),
     },
     dropped: true,

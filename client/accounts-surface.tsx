@@ -18,7 +18,8 @@ import {
   type ProjectOption,
 } from "../shared/rpc";
 import { AddAccountModal } from "./add-account";
-import { AddPiAccountModal, ApiKeyModal, PiSectionNotes, ProxyModal, piCardDetails } from "./pi-accounts";
+import { ApiAccountModal } from "./api-account";
+import { AddPiAccountModal, ApiKeyModal, HomesHint, PiSectionNotes, ProxyModal, ShellHint, piCardDetails } from "./pi-accounts";
 import { ResetConfirm, redeemToast, resetBadge } from "./reset-confirm";
 import { describe, stoppedWaiting, useStore, VISIBLE_POLL_MS, type ZeroSubStore } from "./store";
 import { ActionsMenu, Badge, Button, Card, IconButton, UsageBar, useText, type MenuAction } from "./ui";
@@ -267,6 +268,16 @@ function FamilySection({
         <Text style={text.muted}>No {FAMILY_LABEL[family]} accounts yet.</Text>
       ) : null}
       {family === "pi" ? <PiSectionNotes theme={theme} state={state} accounts={accounts} store={store} /> : <UpNext theme={theme} accounts={accounts} />}
+      {family === "claude" && state.launchers ? (
+        <ShellHint
+          theme={theme}
+          directory={state.launchers}
+          accounts={accounts}
+          example="claude-<account>.sh"
+          note="Each runs claude on its account, with its settings and proxy, whatever your shell exports."
+        />
+      ) : null}
+      {family === "claude" && state.claudeHomes ? <HomesHint theme={theme} family="claude" homes={state.claudeHomes} store={store} /> : null}
       {!HAND_OFF[family] ? (
         <Text style={text.small}>
           A {FAMILY_LABEL[family]} conversation stays on the account it started on. New agents use the default account, or the
@@ -630,7 +641,13 @@ function AccountCard({
       {renaming ? (
         <RenameModal theme={theme} account={account} store={store} onClose={() => setRenaming(false)} />
       ) : null}
-      {editingApi ? <ApiKeyModal theme={theme} store={store} account={account} onClose={() => setEditingApi(false)} /> : null}
+      {editingApi ? (
+        account.family === "claude" ? (
+          <ApiAccountModal theme={theme} store={store} account={account} onClose={() => setEditingApi(false)} />
+        ) : (
+          <ApiKeyModal theme={theme} store={store} account={account} onClose={() => setEditingApi(false)} />
+        )
+      ) : null}
       {editingProxy ? <ProxyModal theme={theme} store={store} account={account} onClose={() => setEditingProxy(false)} /> : null}
       {choosingProjects ? <ProjectsModal theme={theme} account={account} store={store} onClose={() => setChoosingProjects(false)} /> : null}
       <Modal title={`Remove ${account.label}?`} open={confirmRemove} onOpenChange={setConfirmRemove}>
@@ -950,10 +967,19 @@ function AutomationSettings({ theme }: { theme: Theme }) {
 }
 
 /** Paseo stopped waiting for a change that moves agents; the daemon carries on with it. */
-/** A Claude card's line about its network: its own proxy and the address Anthropic sees its requests come from. */
+/**
+ * A Claude card's line about its key (an API account's) and its network: its own proxy and the
+ * address Anthropic sees its requests come from.
+ */
 function claudeCardDetails(account: AccountView): string | null {
   if (account.family !== "claude") return null;
-  const parts = [account.proxy ? `Via ${account.proxy}` : null, egressText(account.egress)].filter(Boolean);
+  const api = account.api;
+  const parts = [
+    api ? `${api.keyKind === "api_key" ? "Key" : "Token"}${api.keyHint ? ` …${api.keyHint}` : ""} · ${api.baseUrl ?? "Anthropic API"}` : null,
+    account.proxy ? `Via ${account.proxy}` : null,
+    egressText(account.egress),
+    account.launcher ? `Terminal: ${account.launcher}` : null,
+  ].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 

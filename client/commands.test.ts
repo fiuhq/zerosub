@@ -56,8 +56,10 @@ function commandCenter(accounts: AccountView[]) {
     showComposerPill: false,
     autoSwitch: true,
     warnings: [],
+    launchers: null,
     piLaunchers: null,
     piHomes: null,
+    claudeHomes: null,
   };
   const rpc = vi.fn(async () => ({ until: null }));
   const store = { current: { state, error: null, updatedAt: 0 }, subscribe: () => () => undefined, rpc, refresh: async () => undefined };
