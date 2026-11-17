@@ -242,7 +242,7 @@ Paseo installs plugins per host (daemon), so install ZeroSub on each host whose 
 
 ## How it works
 
-Each added account gets its own credential home under `$PASEO_HOME/zerosub/homes/`:
+Each added account gets its own credential home, set up under `$PASEO_HOME/zerosub/homes/`. Claude and Pi accounts' homes then move beside their terminal scripts, in `~/.claude-config` and `~/.pi-config` (`ZEROSUB_LAUNCHER_DIR` and `ZEROSUB_PI_DIR` move them) or a folder picked in the app:
 
 - Claude uses it as `CLAUDE_CONFIG_DIR`; Codex uses it as `CODEX_HOME`; Grok uses it as `GROK_HOME`; Cursor uses it as `XDG_CONFIG_HOME` (see [Cursor accounts](#cursor-accounts)).
 - The CLIs keep each home's login separate: Claude in its own keychain entry (`.credentials.json` on Linux), Codex, Grok and Cursor in their own `auth.json`.
