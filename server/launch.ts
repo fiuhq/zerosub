@@ -2,6 +2,7 @@
 // ZeroSub would give a brand-new agent right now. Same routing, preferences and usage readings as the
 // service, read from disk, so the tool follows every switch, limit and default change ZeroSub makes.
 // `bin/zerosub-claude` evaluates what this prints, then runs claude.
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { z } from "zod";
@@ -49,6 +50,29 @@ export function launchAccount(
   );
 }
 
+/**
+ * The account once its home has stopped moving: no move of it on record and its folder on disk,
+ * re-read from `read` after each `pause` for up to `attempts` reads. Throws when it never settles.
+ */
+export async function settledAccount(
+  state: StoredState,
+  id: string,
+  read: () => Promise<StoredState>,
+  { attempts = 60, pause = () => new Promise<void>((resolve) => setTimeout(resolve, 1000)) }: { attempts?: number; pause?: () => Promise<void> } = {},
+): Promise<StoredAccount> {
+  for (let left = attempts; ; left -= 1) {
+    const account = state.accounts.find((candidate) => candidate.id === id);
+    const move = state.moves[id];
+    if (account && !move && (!account.home || existsSync(account.home))) return account;
+    if (left <= 1) {
+      const why = !account ? "is no longer in ZeroSub" : move ? `is still moving from ${move.from} to ${move.to}` : `has no home at ${account.home}`;
+      throw new Error(`zerosub launch: account ${account?.label ?? id} ${why}`);
+    }
+    await pause();
+    state = await read();
+  }
+}
+
 /** An env patch as POSIX shell: `export K='v'` to set, `unset K` to clear. */
 export function shellExports(patch: EnvPatch): string {
   const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
@@ -66,8 +90,11 @@ async function readPreferences(): Promise<Preferences> {
 async function main(): Promise<void> {
   const family = (process.argv[2] ?? "claude") as Family;
   if (family !== "claude") throw new Error(`zerosub launch: only claude is supported, got ${family}`);
-  const account = launchAccount(await new StateStore(statePath(), { readOnly: true }).read(), await loadReadings(), await readPreferences(), family, Date.now());
-  if (!account) throw new Error("zerosub launch: ZeroSub has no Claude account to route to");
+  const store = new StateStore(statePath(), { readOnly: true });
+  const state = await store.read();
+  const chosen = launchAccount(state, await loadReadings(), await readPreferences(), family, Date.now());
+  if (!chosen) throw new Error("zerosub launch: ZeroSub has no Claude account to route to");
+  const account = await settledAccount(state, chosen.id, () => store.read());
   // Said on stderr so the caller's log names the account; stdout is only the env to apply.
   console.error(`[ZeroSub] launch → ${account.label}`);
   console.log(shellExports(await new ClaudeAdapter().env(account.home)));

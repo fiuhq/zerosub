@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Usage } from "../shared/model";
 import { preferences } from "../shared/preferences";
-import { earlyLines, launchAccount, shellExports } from "./launch";
+import { earlyLines, launchAccount, settledAccount, shellExports } from "./launch";
 import { emptyState, type StoredAccount, type StoredState } from "./state";
 
 const NOW = Date.parse("2026-10-29T04:30:00Z");
@@ -56,6 +59,57 @@ describe("launchAccount", () => {
 
   it("answers null when ZeroSub has no account of the family", () => {
     expect(launchAccount(state([]), new Map(), prefs, "claude", NOW)).toBeNull();
+  });
+});
+
+describe("settledAccount", () => {
+  const dirs: string[] = [];
+  afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+  const scratch = () => {
+    const dir = mkdtempSync(join(tmpdir(), "zerosub-launch-"));
+    dirs.push(dir);
+    return dir;
+  };
+
+  it("waits out a move on record and launches on the home the fresh read names", async () => {
+    const root = scratch();
+    const from = join(root, "homes", "claude-a");
+    const to = root;
+    const moving = state([account({ id: "claude-a", home: from })], { moves: { "claude-a": { from, to, at: "2026-11-17T00:00:00Z" } } });
+    const reads = [moving, state([account({ id: "claude-a", home: to })])];
+    let pauses = 0;
+    const settled = await settledAccount(moving, "claude-a", async () => reads.shift()!, { pause: async () => void (pauses += 1) });
+    expect(settled.home).toBe(to);
+    expect(pauses).toBe(2);
+  });
+
+  it("launches at once on a home that is there, and on the CLI login, which has none", async () => {
+    const home = scratch();
+    const read = () => Promise.reject(new Error("read again"));
+    expect((await settledAccount(state([account({ id: "claude-a", home })]), "claude-a", read)).home).toBe(home);
+    expect((await settledAccount(state([account({ id: "claude-main", kind: "main", home: null })]), "claude-main", read)).home).toBeNull();
+  });
+
+  it("stops after its reads, naming the account and the move, when the move never finishes", async () => {
+    const s = state([account({ id: "claude-a", label: "Work", home: "/gone/claude-a" })], {
+      moves: { "claude-a": { from: "/gone/claude-a", to: "/new", at: "2026-11-17T00:00:00Z" } },
+    });
+    let reads = 0;
+    const read = async () => {
+      reads += 1;
+      return s;
+    };
+    await expect(settledAccount(s, "claude-a", read, { attempts: 3, pause: async () => {} })).rejects.toThrow(
+      "zerosub launch: account Work is still moving from /gone/claude-a to /new",
+    );
+    expect(reads).toBe(2);
+  });
+
+  it("stops when the home folder is missing and no move explains it", async () => {
+    const s = state([account({ id: "claude-a", label: "Work", home: "/gone/claude-a" })]);
+    await expect(settledAccount(s, "claude-a", async () => s, { attempts: 2, pause: async () => {} })).rejects.toThrow(
+      "zerosub launch: account Work has no home at /gone/claude-a",
+    );
   });
 });
 

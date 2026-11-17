@@ -3,7 +3,7 @@ import { Text, View } from "react-native";
 import { formatResetIn } from "../shared/format";
 import type { AccountView } from "../shared/model";
 import { preferences } from "../shared/preferences";
-import { upNextOrder, usable, type UpNextLines, type UpNextRank, type UpNextRole } from "../shared/up-next";
+import { routable, upNextOrder, usable, type UpNextLines, type UpNextRank, type UpNextRole } from "../shared/up-next";
 import { Badge, Card, useText } from "./ui";
 
 type Theme = PluginSurfaceProps["theme"];
@@ -42,6 +42,7 @@ function badge(account: AccountView, rank: UpNextRank, role: UpNextRole): { labe
   if (role === "here") return { label: "Agents go here", tone: "accent" };
   if (role === "start") return { label: "New agents start here", tone: "accent" };
   if (role === "switch") return { label: "Next on a switch", tone: "accent" };
+  if (account.auth === "api") return { label: "Only when picked", tone: "muted" };
   return rank.tier === 2 ? { label: "Nearly full", tone: "warning" } : { label: "Ready", tone: "success" };
 }
 
@@ -75,7 +76,7 @@ export function UpNext({ theme, accounts }: { theme: Theme; accounts: AccountVie
                 borderColor: theme.colors.border,
               }}
             >
-              <Text style={{ ...text.small, width: 18, fontWeight: "600" }}>{usable(account) ? index + 1 : "–"}</Text>
+              <Text style={{ ...text.small, width: 18, fontWeight: "600" }}>{routable(account) ? index + 1 : "–"}</Text>
               <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                 <Text style={text.strong} numberOfLines={1}>
                   {account.label}

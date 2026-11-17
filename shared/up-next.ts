@@ -65,6 +65,9 @@ export function compareUpNext(a: UpNextRank, b: UpNextRank): number {
 
 export const usable = (account: AccountView) => account.status === "ready" || account.status === "checking";
 
+/** Routing may put agents here by itself (server/routing.ts `canStandIn`): usable and not billed per use. */
+export const routable = (account: AccountView) => usable(account) && account.auth !== "api";
+
 /**
  * What a row says about routing. here: new agents and switches both go there. start: new agents
  * start there, on the default. switch: the next switch goes there. project: kept for its projects.
@@ -85,7 +88,7 @@ export function upNextOrder(
   const kept = (account: AccountView) => account.projects.length > 0;
   const ranked = accounts.map((account) => ({ account, rank: upNextRank(account.usage, now, lines) }));
   const open = ranked
-    .filter(({ account }) => usable(account))
+    .filter(({ account }) => routable(account))
     .sort(
       (a, b) =>
         compareUpNext(a.rank, b.rank) ||
@@ -94,12 +97,12 @@ export function upNextOrder(
     );
   const shared = open.filter(({ account }) => !kept(account));
   const top = shared[0]?.account;
-  const home = shared.find(({ account, rank }) => account.isDefault && !(lines && rank.tier === 2))?.account;
+  const home = ranked.find(({ account, rank }) => account.isDefault && usable(account) && !kept(account) && !(lines && rank.tier === 2))?.account;
   const stuck = !autoSwitch && accounts.some((account) => account.isDefault && account.status === "limited");
-  const start = balanceNewAgents ? top : stuck ? undefined : (home ?? top);
+  const start = balanceNewAgents ? (top ?? home) : stuck ? undefined : (home ?? top);
   const role = (account: AccountView): UpNextRole =>
     kept(account) ? "project" : account === start ? (start === top ? "here" : "start") : account === top ? "switch" : null;
-  return [...shared, ...open.filter(({ account }) => kept(account)), ...ranked.filter(({ account }) => !usable(account))].map((row) => ({
+  return [...shared, ...open.filter(({ account }) => kept(account)), ...ranked.filter(({ account }) => !routable(account))].map((row) => ({
     ...row,
     role: role(row.account),
   }));

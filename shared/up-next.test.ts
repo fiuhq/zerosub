@@ -132,4 +132,27 @@ describe("upNextOrder", () => {
       ["claude-team", null],
     ]);
   });
+
+  it("never picks a Claude API account, which routing only uses when it is picked", () => {
+    // The subscription is past the 95% weekly line (tier 2); the API key has no reading (tier 1).
+    const sub = view("claude-sub", 96, 50);
+    const api = view("claude-api", 0, 0, { auth: "api", usage: null });
+    expect(roles(upNextOrder([api, sub], NOW, undefined, SPREAD))).toEqual([
+      ["claude-sub", "here"],
+      ["claude-api", null],
+    ]);
+    expect(roles(upNextOrder([api, sub], NOW, undefined, DEFAULT_FIRST))).toEqual([
+      ["claude-sub", "here"],
+      ["claude-api", null],
+    ]);
+  });
+
+  it("starts new agents on an API default when they aren't spread, as routing does", () => {
+    const sub = view("claude-sub", 10, 50);
+    const api = view("claude-api", 0, 0, { auth: "api", usage: null, isDefault: true });
+    expect(roles(upNextOrder([api, sub], NOW, undefined, DEFAULT_FIRST))).toEqual([
+      ["claude-sub", "switch"],
+      ["claude-api", "start"],
+    ]);
+  });
 });
