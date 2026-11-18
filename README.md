@@ -81,7 +81,7 @@ Turn on **Spread new agents across accounts** to select an account from its usag
 
 On Paseo 0.16 and later, the message box of an agent that doesn't exist yet has an **Account** control: in a new agent's tab and on the New workspace screen. Both the app and the host need Paseo 0.16: the choice travels in the new agent's metadata, which an older host doesn't take, so with one the control isn't shown. Like the account button, it shows once the provider has more than one account, and the account button's preference turns it off too.
 
-- The first choice names no account, and says where the agent starts then: on the default, on the account picked for the next new agent, or, as **Automatic**, on the account with the most room (with **Spread new agents across accounts** on, or when the default can't take a new agent).
+- The first choice names no account, and says where the agent starts then: on the default, on the account picked for the next new agent, or, as **Automatic**, at the top of Up next (with **Spread new agents across accounts** on, or when the default can't take a new agent).
 - Any other choice starts this one agent on that account and keeps it there, as if you had picked it from the agent's account button. It outranks spreading and the next-new-agent pick, which waits for an agent that names no account.
 - Only accounts that can take a new agent are listed: none that are signed out or disabled, and none at their limit while automatic switching is on. If the chosen account can't take the agent by the time you send the message, the agent starts where it would have without a choice.
 
@@ -199,11 +199,11 @@ There's no sign-in. ZeroSub checks the key by listing the endpoint's models (`GE
 **When it's used.** It's billed per use, so by default ZeroSub never moves work onto it by itself, like any API-key account:
 
 - Pick it for an agent (the account button, `/account <name>`, the next-new-agent pick), or make it the default; then new agents start on it.
-- Automatic choices (failover at a limit, **Spread new agents across accounts**, a default that's out, **Fork the chat to the other provider**) skip it.
+- Automatic choices (failover at a limit, **Spread new agents across accounts**, a default that's out, **Fork the chat to another provider**) skip it.
 
 Turn on **Use paid API accounts when every subscription is out** (off by default; in Accounts, or **Settings → Plugins → zerosub → ZeroSub preferences**) to let it take over as a last resort:
 
-- Automatic choices then use it only when every ChatGPT subscription account is at its limit, disabled or signed out. A ChatGPT agent that hits its limit first spends a banked reset if **Use banked resets when every account is out** is on and one can be spent; otherwise it carries on in its continuation tab on Azure, as it would on another ChatGPT account, and its timeline says it moved to Azure OpenAI, a paid API, because every subscription account is out. A stopped Claude chat forked to ChatGPT (**Fork the chat to the other provider**) can likewise land on Azure when no ChatGPT subscription has room, and its note says so; a fork to OpenCode uses no ZeroSub account, so Azure plays no part there.
+- Automatic choices then use it only when every ChatGPT subscription account is at its limit, disabled or signed out. A ChatGPT agent that hits its limit first spends a banked reset if **Use banked resets when every account is out** is on and one can be spent; otherwise it carries on in its continuation tab on Azure, as it would on another ChatGPT account, and its timeline says it moved to Azure OpenAI, a paid API, because every subscription account is out. A stopped Claude chat forked to ChatGPT (**Fork the chat to another provider**) can likewise land on Azure when no ChatGPT subscription has room, and its note says so; a fork to OpenCode uses no ZeroSub account, so Azure plays no part there.
 - With **Use banked resets when every account is out** on too, a new ChatGPT agent (a fork from Claude included) opens on a subscription account at its limit rather than on Azure when that account's latest reading shows a banked reset it can use now, so its first turn spends the reset. Only when no reset can be spent does a new agent start on Azure.
 - Once a subscription account has room again, new agents go back to it. Agents already on Azure stay there, like any ChatGPT conversation.
 
