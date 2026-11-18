@@ -144,20 +144,23 @@ export function isOpenCodeFork(state: Pick<StoredState, "opencodeForks">, agentI
 
 /**
  * An agent's account family: none for an OpenCode continuation (see `isOpenCodeFork`), which runs on
- * the host's own OpenCode login. Once a recovery has lost its record, a continuation is still told
- * apart: an `opencode` agent that continues another with no binding. An OpenCode Go fork is bound to
- * its account before it is created, and an OpenCode continuation never is. Every lookup of an agent's
- * family goes through here, so nothing routes, counts, moves or pins a continuation.
+ * the host's own OpenCode login. Its fork record decides. Only while a recovery's hold stands, when
+ * records may have been lost, is a continuation also told by its labels: an `opencode` agent that
+ * continues another with no binding (an OpenCode Go fork is bound to its account before it is
+ * created, and an OpenCode continuation never is, though a Go fork can lose its binding later, to
+ * "Follow default" say). Every lookup of an agent's family goes through here, so nothing routes,
+ * counts, moves or pins a continuation.
  */
 export function familyOf(
-  state: Pick<StoredState, "opencodeForks" | "bindings">,
+  state: Pick<StoredState, "opencodeForks" | "opencodeHolds" | "bindings">,
   families: Readonly<Record<string, Family>>,
   agent: { id: string; provider: string; continuedFrom?: string | null },
 ): Family | undefined {
   const family = families[agent.provider];
   if (family !== "opencode") return family;
   if (isOpenCodeFork(state, agent.id)) return undefined;
-  return agent.continuedFrom && !state.bindings[agent.id] ? undefined : family;
+  const recovering = Object.keys(state.opencodeHolds).length > 0;
+  return recovering && agent.continuedFrom && !state.bindings[agent.id] ? undefined : family;
 }
 
 const ContinuationMemberSchema = z.object({

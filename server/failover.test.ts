@@ -2519,6 +2519,14 @@ describe("forking to the other provider", () => {
         expect(routes).toContain(goAgent.id);
       });
 
+      it("keeps an OpenCode Go fork that lost its binding on OpenCode Go", async () => {
+        // "Follow default" drops a Go fork's binding; with no recovery under way, that makes it no continuation.
+        const { created, service, paseo } = await setUpFork("bypassPermissions", [], {}, [goAgent], { prefs: { autoSwitch: false }, ...GO });
+        expect((await service.view(paseo)).agents.map((route) => route.agentId)).toContain(goAgent.id);
+        await expect(service.forkAgent(paseo, AGENT, "opencode")).rejects.toThrow(/already continued in “Fix the build \(continued on OpenCode Go\)”/);
+        expect(created).toHaveLength(0);
+      });
+
       it("still knows an OpenCode continuation after a recovery lost its record", async () => {
         const { service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [openCodeAgent], { prefs: { autoSwitch: false }, ...GO });
         await store.update((draft) => {

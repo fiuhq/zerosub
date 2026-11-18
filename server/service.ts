@@ -2299,11 +2299,12 @@ export class Service {
       if (refusal) return refusal;
     }
     // Prompting the original again while it's still out must reuse its fork, not start a second one.
+    const families = await this.families.resolve(paseo);
     const forkId =
       record?.forkAgentId ??
       (await listAgents(paseo, false)).agents.find(
-        // An OpenCode Go fork is bound to its account; an OpenCode continuation never is.
-        (agent) => agent.continuedFrom === agentId && agent.provider === OPENCODE_PROVIDER && !recordRead.bindings[agent.id],
+        // An OpenCode Go fork has a family; an OpenCode continuation has none (see `familyOf`).
+        (agent) => agent.continuedFrom === agentId && agent.provider === OPENCODE_PROVIDER && !familyOf(recordRead, families, agent),
       )?.id;
     if (!forkId) return this.createOpenCodeFork(paseo, agentId, original, source);
 
@@ -2613,10 +2614,10 @@ export class Service {
     source: "auto" | "user",
     retry?: NonNullable<OpenCodeFork["pending"]>,
   ): Promise<ForkOutcome> {
-    // A copy on another provider, OpenCode Go included (its fork is bound to an account), already carries the work.
-    const { bindings } = await this.store.read();
+    // A copy on another provider, OpenCode Go included (an `opencode` agent with a family, see `familyOf`), already carries the work.
+    const [state, families] = await Promise.all([this.store.read(), this.families.resolve(paseo)]);
     const otherCopy = (await listAgents(paseo, false)).agents.find(
-      (agent) => agent.continuedFrom === agentId && (agent.provider !== OPENCODE_PROVIDER || bindings[agent.id] !== undefined),
+      (agent) => agent.continuedFrom === agentId && (agent.provider !== OPENCODE_PROVIDER || familyOf(state, families, agent) !== undefined),
     );
     if (otherCopy) return { skipped: alreadyContinued(otherCopy.title ?? `${otherCopy.provider} agent ${otherCopy.id}`) };
     // A create whose outcome was never seen may be in Paseo under its key, which stays tied to its
