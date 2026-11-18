@@ -33,6 +33,7 @@ function account(status: AccountView["status"], nextAgentUntil: string | null): 
     egress: null,
     externalHome: false,
     moving: null,
+    azure: null,
   };
 }
 
@@ -54,6 +55,7 @@ function commandCenter(accounts: AccountView[]) {
     canReopen: false,
     browserSignIn: true,
     showComposerPill: false,
+    openCodeAvailable: false,
     autoSwitch: true,
     warnings: [],
     launchers: null,

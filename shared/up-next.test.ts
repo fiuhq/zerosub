@@ -79,6 +79,7 @@ function view(id: string, weeklyUsed: number, resetsInHours: number, patch: Part
     agentCount: 0,
     home: null,
     projects: [],
+    azure: null,
     ...patch,
   };
 }

@@ -11,6 +11,7 @@ import { Service, describe } from "./server/service";
 import { preferences } from "./shared/preferences";
 import {
   addApiAccount,
+  addAzureAccount,
   cancelLogin,
   clearAccountLimit,
   getState,
@@ -32,6 +33,7 @@ import {
   startLogin,
   submitLoginCode,
   updateApiAccount,
+  updateAzureAccount,
 } from "./shared/rpc";
 
 export default function contribute(server: PluginServerContext) {
@@ -88,6 +90,10 @@ export default function contribute(server: PluginServerContext) {
       console.error(`[ZeroSub] failover for ${event.agent.id} failed`, describe(error));
     });
   });
+  // A new agent is in the next state the app reads, so its composer has its account at once.
+  server.on("agent.created", () => {
+    service.onAgentCreated();
+  });
   server.on("agent.archived", (event) => {
     void service.onAgentArchived(event.agent.id).catch(() => undefined);
   });
@@ -122,7 +128,7 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(redeemReset, ({ accountId, agentId }, { paseo }) => service.redeem(paseo, accountId, agentId));
   server.handle(setAgentAccount, ({ agentId, accountId }, { paseo }) => service.setAgentAccount(paseo, agentId, accountId));
-  server.handle(forkAgent, ({ agentId }, { paseo }) => service.forkAgent(paseo, agentId));
+  server.handle(forkAgent, ({ agentId, destination }, { paseo }) => service.forkAgent(paseo, agentId, destination));
   server.handle(setAccountEnabled, ({ accountId, enabled }, { paseo }) => service.setAccountEnabled(paseo, accountId, enabled));
   server.handle(listProjects, async (_input, { paseo }) => ({ projects: await service.listProjects(paseo) }));
   server.handle(setAccountProjects, ({ accountId, projectIds }, { paseo }) => service.setProjects(paseo, accountId, projectIds));
@@ -131,6 +137,8 @@ export default function contribute(server: PluginServerContext) {
     await service.updateApiAccount(accountId, input);
     return { ok: true as const };
   });
+  server.handle(addAzureAccount, (input) => service.addAzureAccount(input));
+  server.handle(updateAzureAccount, async ({ accountId, ...input }) => ({ ok: true as const, ...(await service.updateAzureAccount(accountId, input)) }));
   server.handle(setAccountProxy, async ({ accountId, proxy }) => ({ ok: true as const, proxy: await service.setProxy(accountId, proxy) }));
   server.handle(setClaudeHomesDir, async ({ dir }) => ({ ok: true as const, ...(await service.setClaudeHomesDir(dir)) }));
   server.handle(importAccount, async ({ path }) => ({ accountId: await service.importAccount(path) }));
