@@ -982,7 +982,7 @@ function AutomationSettings({ theme, compact }: { theme: Theme; compact: boolean
           />
           <SettingsSwitch
             label="When every account is out, fork the chat to another provider"
-            hint={`A stopped chat carries on in a new agent on the next provider you have an account for (${familyPhrase(FALLBACK_ORDER, "then")}), with the conversation so far; a stopped Claude chat can go to OpenCode instead (pick the destination below). Another provider gets a mode no looser than this agent's. OpenCode gets Plan or Build under the host's own permission policy, which can allow more than Claude does. The original stays as it was.`}
+            hint={`A stopped chat carries on in a new agent on the next provider you have an account for (${familyPhrase(FALLBACK_ORDER, "then")}), with the conversation so far. A stopped Claude chat can instead go to this host's OpenCode, which uses no ZeroSub account (pick the destination below). Another provider gets a mode no looser than this agent's. OpenCode gets Plan or Build under the host's own permission policy, which can allow more than Claude does. The original stays as it was.`}
             value={settings.values.forkOtherProvider}
             disabled={settings.saving || !settings.values.autoSwitch}
             onValueChange={(forkOtherProvider) => save({ forkOtherProvider })}

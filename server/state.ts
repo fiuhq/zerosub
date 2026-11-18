@@ -132,6 +132,16 @@ export type OpenCodeFork = z.infer<typeof OpenCodeForkSchema>;
 export const OpenCodeHoldSchema = z.object({ at: z.string(), told: z.boolean().optional() });
 export const ALL_SOURCES = "*";
 
+/**
+ * The agent is one of ZeroSub's OpenCode continuations: it runs on the host's own OpenCode login and
+ * belongs to no account. Paseo's `opencode` provider also runs the OpenCode Go family, so routing,
+ * failover and the fork bookkeeping check this before treating an `opencode` agent as Go's. The
+ * record is written before the fork is created, so even its first session is recognised.
+ */
+export function isOpenCodeFork(state: Pick<StoredState, "opencodeForks">, agentId: string): boolean {
+  return Object.values(state.opencodeForks).some((record) => record.forkAgentId === agentId || record.pending?.targetId === agentId);
+}
+
 const ContinuationMemberSchema = z.object({
   accountId: z.string(),
   identity: z.string().nullable(),

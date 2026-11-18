@@ -140,7 +140,7 @@ describe("the accounts a composer without an agent offers", () => {
   });
 
   it("says Automatic when new agents are spread, or the default can't take one, and lists every account", () => {
-    const automatic = { value: FOLLOW, label: "Automatic", description: "The account with the most room" };
+    const automatic = { value: FOLLOW, label: "Automatic", description: "The top of Up next" };
     expect(accountChoices(view([main, work], { balanceNewAgents: true }), "claude", undefined)?.options).toEqual([
       automatic,
       { value: "main", label: "main", description: "42% used" },

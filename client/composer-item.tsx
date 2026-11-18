@@ -63,13 +63,13 @@ export function accountChoices(state: StateView, provider: string | null, chosen
   if (accounts.length < 2) return null;
   const offered = accounts.filter((account) => takesAgents(state, account));
 
-  // Without a choice: the one-time pick, else (when spreading) the account with the most room, else the default.
+  // Without a choice: the one-time pick, else (when spreading) the top of Up next, else the default.
   const picked = offered.find((account) => account.nextAgentUntil);
   const usual = picked ?? (state.balanceNewAgents ? undefined : offered.find((account) => account.isDefault));
   const options: AccountOption[] = [
     usual
       ? { value: FOLLOW, label: usual.label, description: detail(usual, picked ? "Picked for the next new agent" : "Default") }
-      : { value: FOLLOW, label: "Automatic", description: "The account with the most room" },
+      : { value: FOLLOW, label: "Automatic", description: "The top of Up next" },
   ];
   for (const account of offered) {
     if (account !== usual) options.push({ value: account.id, label: account.label, description: detail(account) });

@@ -88,6 +88,7 @@ import {
   accountsOf,
   defaultAccount,
   findAccount,
+  isOpenCodeFork,
   mainAccount,
   type Binding,
   type Cleanup,
@@ -1037,6 +1038,8 @@ export class Service {
     this.attach(context.paseo);
     const family = (await this.families.resolve(context.paseo))[request.provider];
     if (!family) return undefined;
+    // An OpenCode continuation runs on the host's own OpenCode login, never on an OpenCode Go account.
+    if (family === "opencode" && isOpenCodeFork(await this.store.read(), request.agentId)) return undefined;
     // A family known not to work here (Cursor off Linux, with a registry made on Linux, say) gives an
     // added account no env of its own: the session runs on the CLI login, so it isn't routed or
     // recorded. Until availability is first checked, sessions are routed as usual.
@@ -1200,6 +1203,8 @@ export class Service {
     // The account the turn ran on, read before anything that takes a while: the agent may be moved
     // meanwhile, and the limit is still this account's.
     const ranOn = await this.store.read();
+    // An OpenCode continuation uses no account, so its turns say nothing about an OpenCode Go one.
+    if (family === "opencode" && isOpenCodeFork(ranOn, agentId)) return;
     const accountId = this.runningOn(ranOn, agentId, family) ?? null;
     if (accountId) this.activeAt.set(accountId, endedAt);
     // An Azure OpenAI account fails on the API's errors, not the ChatGPT plan's notices, and only a
@@ -2049,6 +2054,7 @@ export class Service {
           agent.id !== except &&
           !agent.archived &&
           families[agent.provider] === family &&
+          !(family === "opencode" && isOpenCodeFork(state, agent.id)) &&
           this.runningOn(state, agent.id, family) === accountId,
       )
       .map((agent) => agent.id);
@@ -2115,6 +2121,8 @@ export class Service {
     for (const agent of agents) {
       const other = families[agent.provider];
       if (agent.continuedFrom !== agentId || !other || !candidates.includes(other)) continue;
+      // An OpenCode continuation is no OpenCode Go fork: the check below refuses it as one.
+      if (other === "opencode" && isOpenCodeFork(state, agent.id)) continue;
       const account = findAccount(state, state.bindings[agent.id]?.accountId) ?? mainAccount(state, other);
       if (!account) continue;
       return {
@@ -2285,7 +2293,10 @@ export class Service {
     // Prompting the original again while it's still out must reuse its fork, not start a second one.
     const forkId =
       record?.forkAgentId ??
-      (await listAgents(paseo, false)).agents.find((agent) => agent.continuedFrom === agentId && agent.provider === OPENCODE_PROVIDER)?.id;
+      (await listAgents(paseo, false)).agents.find(
+        // An OpenCode Go fork is bound to its account; an OpenCode continuation never is.
+        (agent) => agent.continuedFrom === agentId && agent.provider === OPENCODE_PROVIDER && !recordRead.bindings[agent.id],
+      )?.id;
     if (!forkId) return this.createOpenCodeFork(paseo, agentId, original, source);
 
     let fork = await snapshot(paseo, forkId);
@@ -2594,8 +2605,12 @@ export class Service {
     source: "auto" | "user",
     retry?: NonNullable<OpenCodeFork["pending"]>,
   ): Promise<ForkOutcome> {
-    const chatGptCopy = (await listAgents(paseo, false)).agents.find((agent) => agent.continuedFrom === agentId && agent.provider !== OPENCODE_PROVIDER);
-    if (chatGptCopy) return { skipped: alreadyContinued(chatGptCopy.title ?? `${chatGptCopy.provider} agent ${chatGptCopy.id}`) };
+    // A copy on another provider, OpenCode Go included (its fork is bound to an account), already carries the work.
+    const { bindings } = await this.store.read();
+    const otherCopy = (await listAgents(paseo, false)).agents.find(
+      (agent) => agent.continuedFrom === agentId && (agent.provider !== OPENCODE_PROVIDER || bindings[agent.id] !== undefined),
+    );
+    if (otherCopy) return { skipped: alreadyContinued(otherCopy.title ?? `${otherCopy.provider} agent ${otherCopy.id}`) };
     // A create whose outcome was never seen may be in Paseo under its key, which stays tied to its
     // first request: only that exact request may be sent again.
     if (retry && !retry.createFailed) {

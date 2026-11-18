@@ -2473,6 +2473,42 @@ describe("forking to the other provider", () => {
       expect(created).toHaveLength(0);
     });
 
+    // Paseo's `opencode` provider runs both the OpenCode Go account family and the OpenCode continuation.
+    describe("beside OpenCode Go accounts", () => {
+      const GO = { opencodeModels: [{ id: "opencode-go/glm-5.3", isDefault: true }] };
+      const goAgent = { ...openCodeAgent, id: "go-fork", title: "Fix the build (continued on OpenCode Go)" };
+
+      it("never routes an OpenCode continuation onto an OpenCode Go account", async () => {
+        const { service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [openCodeAgent], { prefs: { autoSwitch: false }, ...GO });
+        await store.update((draft) => {
+          draft.opencodeForks[AGENT] = { forkAgentId: openCodeAgent.id };
+        });
+        const request = { agentId: openCodeAgent.id, provider: "opencode", cwd: "/repo", workspaceId: "ws-1", reason: "create", purpose: "interactive", env: {} };
+        expect(await service.onSessionOpen(request as never, { paseo } as never)).toBeUndefined();
+        const state = await store.read();
+        expect(state.sessions[openCodeAgent.id]).toBeUndefined();
+        expect(state.bindings[openCodeAgent.id]).toBeUndefined();
+      });
+
+      it("doesn't take an OpenCode continuation for an OpenCode Go fork", async () => {
+        const { created, service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [openCodeAgent], { prefs: { autoSwitch: false }, ...GO });
+        await store.update((draft) => {
+          draft.opencodeForks[AGENT] = { forkAgentId: openCodeAgent.id };
+        });
+        await expect(service.forkAgent(paseo, AGENT)).rejects.toThrow(/already continued in “Fix the build \(continued on OpenCode\)”/);
+        expect(created).toHaveLength(0);
+      });
+
+      it("doesn't take an OpenCode Go fork for an OpenCode continuation", async () => {
+        const { created, service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [goAgent], { prefs: { autoSwitch: false }, ...GO });
+        await store.update((draft) => {
+          draft.bindings[goAgent.id] = { accountId: MAIN_ACCOUNT_ID.opencode, source: "thread", at: "2026-09-23T07:00:00.000Z" };
+        });
+        await expect(service.forkAgent(paseo, AGENT, "opencode")).rejects.toThrow(/already continued in “Fix the build \(continued on OpenCode Go\)”/);
+        expect(created).toHaveLength(0);
+      });
+    });
+
     it("never ends with two continuations after a failed OpenCode create, a ChatGPT fork, then Continue on OpenCode", async () => {
       const setup = await setUpFork("bypassPermissions", [], {}, [], { prefs: { autoSwitch: false } });
       setup.hooks.createError = "OpenCode couldn't start";
