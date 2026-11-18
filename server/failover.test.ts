@@ -2527,6 +2527,14 @@ describe("forking to the other provider", () => {
         expect(created).toHaveLength(0);
       });
 
+      it("keeps an unbound OpenCode Go fork on OpenCode Go while another source is held", async () => {
+        const { service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [goAgent], { prefs: { autoSwitch: false }, ...GO });
+        await store.update((draft) => {
+          draft.opencodeHolds["another-source"] = { at: "2026-09-23T07:00:00.000Z" };
+        });
+        expect((await service.view(paseo)).agents.map((route) => route.agentId)).toContain(goAgent.id);
+      });
+
       it("still knows an OpenCode continuation after a recovery lost its record", async () => {
         const { service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [openCodeAgent], { prefs: { autoSwitch: false }, ...GO });
         await store.update((draft) => {
