@@ -2507,6 +2507,28 @@ describe("forking to the other provider", () => {
         await expect(service.forkAgent(paseo, AGENT, "opencode")).rejects.toThrow(/already continued in “Fix the build \(continued on OpenCode Go\)”/);
         expect(created).toHaveLength(0);
       });
+
+      it("shows an OpenCode continuation on no account, and an OpenCode Go fork on its own", async () => {
+        const { service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [openCodeAgent, goAgent], { prefs: { autoSwitch: false }, ...GO });
+        await store.update((draft) => {
+          draft.opencodeForks[AGENT] = { forkAgentId: openCodeAgent.id };
+          draft.bindings[goAgent.id] = { accountId: MAIN_ACCOUNT_ID.opencode, source: "thread", at: "2026-09-23T07:00:00.000Z" };
+        });
+        const routes = (await service.view(paseo)).agents.map((route) => route.agentId);
+        expect(routes).not.toContain(openCodeAgent.id);
+        expect(routes).toContain(goAgent.id);
+      });
+
+      it("still knows an OpenCode continuation after a recovery lost its record", async () => {
+        const { service, paseo, store } = await setUpFork("bypassPermissions", [], {}, [openCodeAgent], { prefs: { autoSwitch: false }, ...GO });
+        await store.update((draft) => {
+          draft.opencodeHolds[AGENT] = { at: "2026-09-23T07:00:00.000Z" };
+        });
+        const request = { agentId: openCodeAgent.id, provider: "opencode", cwd: "/repo", workspaceId: "ws-1", reason: "resume", purpose: "interactive", env: {} };
+        expect(await service.onSessionOpen(request as never, { paseo } as never)).toBeUndefined();
+        expect((await store.read()).sessions[openCodeAgent.id]).toBeUndefined();
+        expect((await service.view(paseo)).agents.map((route) => route.agentId)).not.toContain(openCodeAgent.id);
+      });
     });
 
     it("never ends with two continuations after a failed OpenCode create, a ChatGPT fork, then Continue on OpenCode", async () => {

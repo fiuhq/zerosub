@@ -1,7 +1,7 @@
 import { usePaseo } from "@getpaseo/plugin/client";
 import { SettingsRow, SettingsSelect } from "@getpaseo/plugin/client/ui";
 import { useEffect, useState } from "react";
-import { OPENCODE_LABEL, OPENCODE_PROVIDER } from "../shared/model";
+import { OPENCODE_LABEL, OPENCODE_PROVIDER, fallbackFamilies, familyPhrase } from "../shared/model";
 import type { Preferences } from "../shared/preferences";
 
 interface CatalogModel {
@@ -38,11 +38,11 @@ export function ForkDestinationRows({
       hint={
         values.claudeForkDestination === "opencode"
           ? "Applies when every Claude account is out. OpenCode runs this host's permission policy, so Build can edit files and run shell without asking. That can allow more than Claude does."
-          : "Applies when every Claude account is out. ChatGPT uses the account with the most room left."
+          : `Applies when every Claude account is out. It continues on the first provider you have an account for (${familyPhrase(fallbackFamilies("claude"), "then")}), on the top of its Up next.`
       }
       value={values.claudeForkDestination}
       options={[
-        { label: "ChatGPT", value: "codex" },
+        { label: "Another provider", value: "codex" },
         { label: OPENCODE_LABEL, value: "opencode" },
       ]}
       disabled={!destinationEnabled}

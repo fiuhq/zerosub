@@ -87,8 +87,8 @@ import {
   StateStore,
   accountsOf,
   defaultAccount,
+  familyOf,
   findAccount,
-  isOpenCodeFork,
   mainAccount,
   type Binding,
   type Cleanup,
@@ -1029,6 +1029,17 @@ export class Service {
     });
   }
 
+  /**
+   * `familyOf` for a hook's agent, which carries no labels. They are read only once a recovery may have
+   * lost a fork record (a hold stands), to tell an OpenCode continuation from an OpenCode Go agent.
+   */
+  private async hookFamily(paseo: PaseoApi, state: StoredState, agent: { id: string; provider: string }): Promise<Family | undefined> {
+    const families = await this.families.resolve(paseo);
+    const family = familyOf(state, families, agent);
+    if (family !== "opencode" || state.bindings[agent.id] || Object.keys(state.opencodeHolds).length === 0) return family;
+    return familyOf(state, families, { ...agent, continuedFrom: (await agentInfo(paseo, agent.id))?.continuedFrom ?? null });
+  }
+
   private async route(
     request: PluginSessionOpenRequest,
     context: PluginHookContext,
@@ -1036,10 +1047,9 @@ export class Service {
     abandoned?: AbortSignal,
   ): Promise<PluginSessionOpenRequest | undefined> {
     this.attach(context.paseo);
-    const family = (await this.families.resolve(context.paseo))[request.provider];
+    // An OpenCode continuation has no family here, so it runs on the host's own OpenCode login.
+    const family = await this.hookFamily(context.paseo, await this.store.read(), { id: request.agentId, provider: request.provider });
     if (!family) return undefined;
-    // An OpenCode continuation runs on the host's own OpenCode login, never on an OpenCode Go account.
-    if (family === "opencode" && isOpenCodeFork(await this.store.read(), request.agentId)) return undefined;
     // A family known not to work here (Cursor off Linux, with a registry made on Linux, say) gives an
     // added account no env of its own: the session runs on the CLI login, so it isn't routed or
     // recorded. Until availability is first checked, sessions are routed as usual.
@@ -1184,7 +1194,7 @@ export class Service {
   async onTurnStarted(agent: { id: string; provider: string }, context: PluginHookContext): Promise<void> {
     this.noteTurn(agent.id);
     this.attach(context.paseo);
-    const family = (await this.families.resolve(context.paseo))[agent.provider];
+    const family = await this.hookFamily(context.paseo, await this.store.read(), agent);
     if (!family) return;
     this.turnStartedAt.set(agent.id, Date.now());
     const accountId = this.runningOn(await this.store.read(), agent.id, family);
@@ -1204,7 +1214,7 @@ export class Service {
     // meanwhile, and the limit is still this account's.
     const ranOn = await this.store.read();
     // An OpenCode continuation uses no account, so its turns say nothing about an OpenCode Go one.
-    if (family === "opencode" && isOpenCodeFork(ranOn, agentId)) return;
+    if (family === "opencode" && !(await this.hookFamily(context.paseo, ranOn, event.agent))) return;
     const accountId = this.runningOn(ranOn, agentId, family) ?? null;
     if (accountId) this.activeAt.set(accountId, endedAt);
     // An Azure OpenAI account fails on the API's errors, not the ChatGPT plan's notices, and only a
@@ -2053,8 +2063,7 @@ export class Service {
         (agent) =>
           agent.id !== except &&
           !agent.archived &&
-          families[agent.provider] === family &&
-          !(family === "opencode" && isOpenCodeFork(state, agent.id)) &&
+          familyOf(state, families, agent) === family &&
           this.runningOn(state, agent.id, family) === accountId,
       )
       .map((agent) => agent.id);
@@ -2119,10 +2128,9 @@ export class Service {
     // whichever provider took it over.
     const { agents } = await listAgents(paseo, false);
     for (const agent of agents) {
-      const other = families[agent.provider];
+      // An OpenCode continuation has no family: the check below refuses it as one.
+      const other = familyOf(state, families, agent);
       if (agent.continuedFrom !== agentId || !other || !candidates.includes(other)) continue;
-      // An OpenCode continuation is no OpenCode Go fork: the check below refuses it as one.
-      if (other === "opencode" && isOpenCodeFork(state, agent.id)) continue;
       const account = findAccount(state, state.bindings[agent.id]?.accountId) ?? mainAccount(state, other);
       if (!account) continue;
       return {
@@ -3268,7 +3276,7 @@ export class Service {
     const initial = await this.store.read();
     const due: Array<{ agentId: string; family: Family }> = [];
     for (const agent of await this.liveAgents(paseo, agentIds)) {
-      const family = families[agent.provider];
+      const family = familyOf(initial, families, agent);
       if (!family) continue;
       const current = this.runningOn(initial, agent.id, family);
       const target = this.targetFor(initial, agent.id, family, current);
@@ -3361,7 +3369,7 @@ export class Service {
       const waiting: Array<{ agentId: string; family: Family }> = [];
       for (const agent of await this.liveAgents(paseo)) {
         const agentId = agent.id;
-        const family = families[agent.provider];
+        const family = familyOf(state, families, agent);
         // A reload can't move an agent of a family that isn't available here: its session opens on
         // the CLI login again (see `route`).
         if (!family || this.availability.get(family)?.ok === false || routing.has(agentId) || this.switching.has(agentId) || this.recentlyActive(agent, now)) continue;
@@ -3584,7 +3592,7 @@ export class Service {
     const routes: AgentRoute[] = [];
     const counts = new Map<string, number>();
     for (const agent of agents) {
-      const family = families[agent.provider];
+      const family = familyOf(state, families, agent);
       if (!family || agent.archived) continue;
       const live = isLive(agent.status);
       const accountId = this.targetFor(state, agent.id, family, this.standingIn(state, agent.id, family, live));
@@ -3914,7 +3922,7 @@ export class Service {
       );
       stayed = agents.filter(
         (agent) =>
-          families[agent.provider] === account.family &&
+          familyOf(latest, families, agent) === account.family &&
           agent.hasHistory &&
           this.targetFor(latest, agent.id, account.family, this.runningOn(latest, agent.id, account.family)) === accountId,
       ).length;
@@ -3933,7 +3941,7 @@ export class Service {
     const { agents } = await listAgents(paseo, true);
     const state = await this.store.read();
     const current = defaultAccount(state, family);
-    const unpinned = agents.filter((agent) => families[agent.provider] === family && !state.bindings[agent.id]);
+    const unpinned = agents.filter((agent) => familyOf(state, families, agent) === family && !state.bindings[agent.id]);
     if (!current || unpinned.length === 0) return;
     const at = new Date().toISOString();
     await this.store.update((draft) => {
@@ -3960,8 +3968,9 @@ export class Service {
     // A session being routed may have gone by the old default: let it record where it opens first.
     if (this.routing.size > 0) await withTimeout(Promise.allSettled(this.routing.keys()), ROUTING_WAIT_MS);
     const families = await this.families.resolve(paseo);
+    const known = await this.store.read();
     const open = (await listAgents(paseo, false)).agents.filter(
-      (agent) => families[agent.provider] === family && !agent.archived && isLive(agent.status),
+      (agent) => familyOf(known, families, agent) === family && !agent.archived && isLive(agent.status),
     );
     let kept = 0;
     const moving: string[] = [];
@@ -4115,7 +4124,7 @@ export class Service {
       const families = await this.families.resolve(paseo);
       const stranded = (await listAgents(paseo, false)).agents.filter(
         (agent) =>
-          families[agent.provider] === account.family &&
+          familyOf(state, families, agent) === account.family &&
           agent.hasHistory &&
           (state.bindings[agent.id]?.accountId ?? state.sessions[agent.id]?.accountId) === accountId,
       );

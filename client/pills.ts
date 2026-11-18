@@ -151,6 +151,8 @@ function buttonFor(
   if (!family) return null;
   const accounts = state.accounts.filter((account) => account.family === family);
   const route = state.agents.find((entry) => entry.agentId === agent.id);
+  // ZeroSub reports no route for an OpenCode continuation: it runs on the host's own login, on no account.
+  if (!route && family === "opencode") return null;
   const current =
     accounts.find((account) => account.id === route?.accountId) ??
     accounts.find((account) => account.isDefault) ??
