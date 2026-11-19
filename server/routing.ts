@@ -230,7 +230,8 @@ function withPending(usage: Usage | null | undefined, pending: number): Usage | 
  * puts an account at its short (5-hour) switch line, 80% by default, behind every account under it,
  * as `fiveHourGated` does, and one with a full window that caps it last. With `pacing` (balanced new
  * agents), an account its pending agents would carry past the 5-hour gate (`paceScore`) goes behind
- * every account they wouldn't, before Up next orders each group.
+ * every account they wouldn't, before Up next orders each group; a full window that caps an account
+ * still ranks it last, gate or not.
  *
  * With `paidFallback` (the `paidApiFallback` preference), a usable paid API account (`isLastResort`)
  * is chosen once no subscription account can stand in; without it, never.
@@ -258,8 +259,11 @@ export function mostAvailable(
   const ranks = new Map(
     candidates.map((account) => [account.id, upNextRank(withPending(usageOf(account.id), pendingOf(account)), now, lines ?? undefined)]),
   );
-  const gated = new Map(
-    candidates.map((account) => [account.id, pacing ? paceScore(usageOf(account.id), pendingOf(account), now).gated : false]),
+  const tier = new Map(
+    candidates.map((account) => {
+      const usage = usageOf(account.id);
+      return [account.id, headroomScore(usage, now) >= 100 ? 2 : pacing && paceScore(usage, pendingOf(account), now).gated ? 1 : 0];
+    }),
   );
   const rank = (account: StoredAccount) => [
     pendingOf(account),
@@ -268,7 +272,7 @@ export function mostAvailable(
     Date.parse(account.createdAt) || 0,
   ];
   candidates.sort((a, b) => {
-    const order = Number(gated.get(a.id)) - Number(gated.get(b.id)) || compareUpNext(ranks.get(a.id)!, ranks.get(b.id)!);
+    const order = tier.get(a.id)! - tier.get(b.id)! || compareUpNext(ranks.get(a.id)!, ranks.get(b.id)!);
     if (order !== 0) return order;
     const left = rank(a);
     const right = rank(b);

@@ -549,6 +549,7 @@ describe("the 5-hour gate", () => {
     };
     const usageOf = (id: string) => (id === lifted.id ? stale : reading(85, 10));
     expect(mostAvailable(stateWith([second, lifted]), "claude", usageOf, NOW)?.id).toBe(second.id);
+    expect(mostAvailable(stateWith([second, lifted]), "claude", usageOf, NOW, new Set(), null, false, { pendingOf: () => 0 })?.id).toBe(second.id);
   });
 
   it("ranks a ChatGPT account with a full week last, though credits keep it going", () => {
@@ -563,6 +564,7 @@ describe("the 5-hour gate", () => {
             credits: { balance: 500, unlimited: false },
           };
     expect(mostAvailable(stateWith([busy, full]), "codex", usageOf, NOW)?.id).toBe(busy.id);
+    expect(mostAvailable(stateWith([busy, full]), "codex", usageOf, NOW, new Set(), null, false, { pendingOf: () => 0 })?.id).toBe(busy.id);
   });
 });
 

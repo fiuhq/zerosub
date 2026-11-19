@@ -2414,7 +2414,8 @@ export class Service {
         if (reason === "pacing") {
           // Turning either preference off stops a pass that's already running.
           if (!this.prefs.balanceNewAgents || !this.prefs.autoSwitch || !this.paced(findAccount(latest, accountId), now)) return;
-          const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([accountId]), this.early, false, this.pacing(now), this.agentModels.get(agentId));
+          const kept = latest.sessions[agentId]?.projectId ? this.reserved(latest, agentId) : latest.projects.map((rule) => rule.accountId);
+          const next = mostAvailable(latest, family, (id) => this.usage.get(id), now, new Set([...kept, accountId]), this.early, false, this.pacing(now), this.agentModels.get(agentId));
           // Only to an account with room in both windows that stays under the gate with this agent.
           if (!next || headroomScore(this.usage.get(next.id), now) >= 100) continue;
           if (paceScore(this.usage.get(next.id), this.pendingOn(next.id, now) + 1, now).gated) continue;
@@ -3493,6 +3494,7 @@ export class Service {
         autoRedeem: this.prefs.autoRedeem,
         portable: this.adapters[family].portable,
         usageOf: (id) => this.usage.get(id),
+        early: this.early,
         pendingOf: (id) => this.pendingOn(id, now),
       });
       if (decision?.bind?.source === "balance") next[family] = decision.account.id;
