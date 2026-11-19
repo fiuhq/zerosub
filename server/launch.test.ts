@@ -27,6 +27,7 @@ function account(partial: Partial<StoredAccount> & Pick<StoredAccount, "id">): S
     limitedUntil: null,
     limitKind: null,
     limitedAt: null,
+    modelLimits: {},
     createdAt: "2026-09-01T00:00:00Z",
     ...partial,
   };

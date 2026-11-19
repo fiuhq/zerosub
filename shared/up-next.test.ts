@@ -73,6 +73,7 @@ function view(id: string, weeklyUsed: number, resetsInHours: number, patch: Part
     plan: null,
     organization: null,
     status: "ready",
+    disabled: false,
     isDefault: false,
     limitedUntil: null,
     usage: usage(fiveHour(0), weekly(weeklyUsed, resetsInHours)),
@@ -80,6 +81,9 @@ function view(id: string, weeklyUsed: number, resetsInHours: number, patch: Part
     home: null,
     projects: [],
     azure: null,
+    bedrock: null,
+    apiError: null,
+    pace: null,
     ...patch,
   };
 }

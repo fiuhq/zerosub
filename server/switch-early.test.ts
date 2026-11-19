@@ -94,6 +94,7 @@ function account(id: string, kind: "main" | "managed" = "managed"): StoredAccoun
     limitedUntil: null,
     limitKind: null,
     limitedAt: null,
+    modelLimits: {},
     createdAt: "2026-09-01T00:00:00Z",
   };
 }

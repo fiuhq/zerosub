@@ -2,7 +2,7 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import * as paseoClient from "@getpaseo/plugin/client";
 import * as paseoUi from "@getpaseo/plugin/client/ui";
 import type { ComponentType } from "react";
-import { accountPeak, formatCredits, formatPercent, pillText } from "../shared/format";
+import { accountPeak, formatCredits, formatPercent, isDisabled, paceVerdict, pillText } from "../shared/format";
 import { ACCOUNT_METADATA_KEY, AGENT_METADATA_KEY, HAND_OFF, type AccountView, type StateView } from "../shared/model";
 import { moveAgent, useStore, type ZeroSubStore } from "./store";
 
@@ -42,6 +42,9 @@ export interface AccountChoices {
   icon: string;
 }
 
+/** Beside an agent's account in its list, when the agent started there because the account's weekly reset was near. */
+export const WEEKLY_RESET_NOTE = "Weekly reset was near";
+
 /** The option that names no account: the agent starts, or goes back to, where the default sends it. */
 export const FOLLOW = "follow";
 /** The option that opens the Accounts screen. */
@@ -66,13 +69,17 @@ export function accountChoices(state: StateView, provider: string | null, chosen
   // Without a choice: the one-time pick, else (when spreading) the top of Up next, else the default.
   const picked = offered.find((account) => account.nextAgentUntil);
   const usual = picked ?? (state.balanceNewAgents ? undefined : offered.find((account) => account.isDefault));
+  const pacedId = state.pacedNext?.[family];
+  const pacedLabel = offered.find((account) => account.id === pacedId)?.label;
+  // A one-time pick sends the next agent there, whatever pacing would choose.
+  const picks = (account: AccountView) => !picked && pacedId === account.id;
   const options: AccountOption[] = [
     usual
-      ? { value: FOLLOW, label: usual.label, description: detail(usual, picked ? "Picked for the next new agent" : "Default") }
-      : { value: FOLLOW, label: "Automatic", description: "The top of Up next" },
+      ? { value: FOLLOW, label: usual.label, description: detail(usual, picks(usual), picked ? "Picked for the next new agent" : "Default") }
+      : { value: FOLLOW, label: "Automatic", description: pacedLabel ? `Pacing picks ${pacedLabel}` : "The top of Up next" },
   ];
   for (const account of offered) {
-    if (account !== usual) options.push({ value: account.id, label: account.label, description: detail(account) });
+    if (account !== usual) options.push({ value: account.id, label: account.label, description: detail(account, picks(account)) });
   }
   // A choice that's no longer offered (the provider changed, or its account can't take agents now) reads as none.
   const value = options.some((option) => option.value === chosen) ? (chosen as string) : FOLLOW;
@@ -82,7 +89,8 @@ export function accountChoices(state: StateView, provider: string | null, chosen
 /**
  * What the account control offers for a running agent: the account it's on first (named with the
  * one it's moving from while a move is under way, as on the account button), then the accounts it
- * can move to, going back to the default, and the Accounts screen. Null when the agent isn't routed
+ * can move to, going back to the default, and the Accounts screen. The agent's account also says
+ * when the agent started on it because its weekly reset was near. Null when the agent isn't routed
  * or its provider has one account. What needs a confirmation, a banked reset or a fork to the other
  * provider, stays with the account button, which shows for it (see pills.ts).
  */
@@ -95,13 +103,21 @@ export function agentChoices(state: StateView, agentId: string): AccountChoices 
   if (!current || accounts.length < 2) return null;
   const running = route.pendingAccountId ? state.accounts.find((account) => account.id === route.pendingAccountId) : undefined;
   const { label } = pillText(current, running ?? null, route.waiting ?? (state.canReopen ? "idle" : "restart"));
-  const options: AccountOption[] = [{ value: current.id, label, description: detail(current) }];
+  // As on the account button: pacing's verdict names the account it picks for the next new agent.
+  const next = (account: AccountView) => state.pacedNext?.[account.family] === account.id;
+  // Why the agent is on this account, which the account button's menu says as "Started here: weekly
+  // reset was near": with the control there, that button doesn't show for an agent that isn't at a
+  // limit. Short, as a list cuts a description to one line. On this account it stands in place of
+  // pacing's verdict, which the others keep; without pacing the usage comes after it.
+  const options: AccountOption[] = [
+    { value: current.id, label, description: detail(current, next(current), route.selectionReason === "weekly_reset" ? WEEKLY_RESET_NOTE : undefined) },
+  ];
   // Codex threads can't change accounts in place and continue in the task's tab for the account;
   // Grok conversations stay on theirs, so the others aren't offered.
   const stays = !route.movable && !HAND_OFF[route.family];
   for (const account of accounts) {
     if (stays || account === current || !takesAgents(state, account)) continue;
-    options.push({ value: account.id, label: route.movable ? account.label : `Continue on ${account.label}`, description: detail(account) });
+    options.push({ value: account.id, label: route.movable ? account.label : `Continue on ${account.label}`, description: detail(account, next(account)) });
   }
   if (route.pinned && route.movable) {
     const fallback = accounts.find((account) => account.isDefault);
@@ -113,10 +129,12 @@ export function agentChoices(state: StateView, agentId: string): AccountChoices 
 
 /** As routing takes them: an account at its limit only with automatic switching off. */
 function takesAgents(state: StateView, account: AccountView): boolean {
-  return account.status !== "signed_out" && account.status !== "disabled" && !(state.autoSwitch && account.status === "limited");
+  return account.status !== "signed_out" && !isDisabled(account) && !(state.autoSwitch && account.status === "limited");
 }
 
-function detail(account: AccountView, lead?: string): string | undefined {
+function detail(account: AccountView, next: boolean, lead?: string): string | undefined {
+  // A pace and a lead: the lead (a one-time pick, or why the agent started here) wins over pacing's verdict.
+  if (account.pace) return lead ?? paceVerdict(account.pace, next);
   const parts = lead ? [lead] : [];
   if (account.status === "limited") parts.push("Limit reached");
   else {

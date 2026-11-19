@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  paceVerdict,
   accountSubtitle,
   apiUsageLines,
   describeReopen,
@@ -9,6 +10,7 @@ import {
   formatExtraUsage,
   formatPlan,
   formatResetIn,
+  isDisabled,
   moveProblem,
   peakUsage,
   pillText,
@@ -67,6 +69,7 @@ describe("account presentation", () => {
     plan: "max",
     organization: null,
     status: "ready",
+    disabled: false,
     isDefault: false,
     limitedUntil: null,
     usage: {
@@ -96,7 +99,10 @@ describe("account presentation", () => {
     egress: null,
     externalHome: false,
     moving: null,
+    pace: null,
     azure: null,
+    bedrock: null,
+    apiError: null,
   };
 
   it("summarises the busiest window", () => {
@@ -183,6 +189,17 @@ describe("move outcomes", () => {
   });
 });
 
+describe("account state for the app", () => {
+  const base = { status: "ready" as const, disabled: false, auth: "subscription" as const };
+
+  it("knows an account is disabled even when it's signed out too", () => {
+    expect(isDisabled(base)).toBe(false);
+    expect(isDisabled({ ...base, status: "signed_out", disabled: true })).toBe(true);
+    // Older servers only said so through the status.
+    expect(isDisabled({ ...base, status: "disabled", disabled: false })).toBe(true);
+  });
+});
+
 describe("formatExtraUsage", () => {
   it("shows spend and the monthly cap in the account's currency", () => {
     expect(formatExtraUsage({ enabled: true, spend: 1234, limit: 5000, currency: "USD" })).toBe("Extra usage on · $12.34 of $50.00 this month");
@@ -217,5 +234,24 @@ describe("Azure usage on the card", () => {
 
   it("says when some turns couldn't be counted", () => {
     expect(apiUsageLines({ ...azure, usage: { ...azure.usage, uncounted: 2 } }, NOW).note).toMatch(/^2 turns couldn't be counted/);
+  });
+});
+
+describe("paceVerdict", () => {
+  const pace = { fiveHourUsed: 41, fiveHourProjected: 54, pendingFiveHour: 0, weeklyUsed: 30, pendingWeekly: 0, weekElapsed: 50, pending: 0, gated: false };
+  it("gives each verdict", () => {
+    expect(paceVerdict(pace, true)).toBe("Picks next");
+    expect(paceVerdict({ ...pace, gated: true }, false)).toBe("Held back: busy hour");
+    expect(paceVerdict({ ...pace, weeklyUsed: 90, weekElapsed: 95 }, false)).toBe("Week nearly used");
+    expect(paceVerdict({ ...pace, weeklyUsed: 77 }, false)).toBe("Using week fast");
+    expect(paceVerdict({ ...pace, weeklyUsed: 40, pendingWeekly: 15 }, false)).toBe("Using week fast");
+    expect(paceVerdict(pace, false)).toBe("Room to spare");
+    expect(paceVerdict({ ...pace, weeklyUsed: null, weekElapsed: null }, false)).toBe("Room to spare");
+  });
+  it("lets the earlier verdict win", () => {
+    const busy = { ...pace, gated: true, weeklyUsed: 95 };
+    expect(paceVerdict(busy, true)).toBe("Picks next");
+    expect(paceVerdict(busy, false)).toBe("Held back: busy hour");
+    expect(paceVerdict({ ...busy, gated: false }, false)).toBe("Week nearly used");
   });
 });
