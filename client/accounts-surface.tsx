@@ -279,7 +279,7 @@ function FamilySection({
       {accounts.length === 0 ? (
         <Text style={text.muted}>No {FAMILY_LABEL[family]} accounts yet.</Text>
       ) : null}
-      {family === "pi" ? <PiSectionNotes theme={theme} state={state} accounts={accounts} store={store} /> : <UpNext theme={theme} accounts={accounts} />}
+      {family === "pi" ? <PiSectionNotes theme={theme} state={state} accounts={accounts} store={store} /> : <UpNext theme={theme} accounts={accounts} paced={state.pacedNext?.[family]} />}
       {family === "claude" && state.launchers ? (
         <ShellHint
           theme={theme}

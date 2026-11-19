@@ -78,12 +78,14 @@ export type UpNextRole = "here" | "start" | "switch" | "project" | null;
  * The family's accounts in the order agents are given them (server/routing.ts `mostAvailable`):
  * Up next first, then the default, then the CLI login. Accounts kept for a project come after the
  * shared ones, since agents of other projects never go there; accounts nothing is routed to come last.
+ * `paced` is the server's own pick for spread new agents (`StateView.pacedNext`), which also counts
+ * pending agents and the 5-hour gate; it goes on top while new agents are spread.
  */
 export function upNextOrder(
   accounts: AccountView[],
   now: number,
   lines: UpNextLines | undefined,
-  { balanceNewAgents, autoSwitch }: { balanceNewAgents: boolean; autoSwitch: boolean },
+  { balanceNewAgents, autoSwitch, paced }: { balanceNewAgents: boolean; autoSwitch: boolean; paced?: string },
 ): { account: AccountView; rank: UpNextRank; role: UpNextRole }[] {
   const kept = (account: AccountView) => account.projects.length > 0;
   const ranked = accounts.map((account) => ({ account, rank: upNextRank(account.usage, now, lines) }));
@@ -95,6 +97,7 @@ export function upNextOrder(
         Number(b.account.isDefault) - Number(a.account.isDefault) ||
         Number(b.account.kind === "main") - Number(a.account.kind === "main"),
     );
+  if (balanceNewAgents && paced) open.sort((a, b) => Number(b.account.id === paced) - Number(a.account.id === paced));
   const shared = open.filter(({ account }) => !kept(account));
   const top = shared[0]?.account;
   const home = ranked.find(({ account, rank }) => account.isDefault && usable(account) && !kept(account) && !(lines && rank.tier === 2))?.account;

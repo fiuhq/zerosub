@@ -103,6 +103,18 @@ describe("upNextOrder", () => {
     ]);
   });
 
+  it("puts the server's paced pick on top while new agents are spread, and ignores it otherwise", () => {
+    // By spare quota alone the spare account leads, but pacing sends new agents to the default.
+    expect(roles(upNextOrder([team, max], NOW, undefined, { ...SPREAD, paced: "claude-team" }))).toEqual([
+      ["claude-team", "here"],
+      ["claude-max", null],
+    ]);
+    expect(roles(upNextOrder([team, max], NOW, undefined, { ...DEFAULT_FIRST, paced: "claude-team" }))).toEqual([
+      ["claude-max", "switch"],
+      ["claude-team", "start"],
+    ]);
+  });
+
   it("starts new agents on the default when they aren't spread, and switches to the top", () => {
     expect(roles(upNextOrder([team, max], NOW, undefined, DEFAULT_FIRST))).toEqual([
       ["claude-max", "switch"],
