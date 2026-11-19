@@ -73,6 +73,7 @@ function view(id: string, weeklyUsed: number, resetsInHours: number, patch: Part
     plan: null,
     organization: null,
     status: "ready",
+    disabled: false,
     isDefault: false,
     limitedUntil: null,
     usage: usage(fiveHour(0), weekly(weeklyUsed, resetsInHours)),
@@ -80,6 +81,9 @@ function view(id: string, weeklyUsed: number, resetsInHours: number, patch: Part
     home: null,
     projects: [],
     azure: null,
+    bedrock: null,
+    apiError: null,
+    pace: null,
     ...patch,
   };
 }
@@ -96,6 +100,18 @@ describe("upNextOrder", () => {
     expect(roles(upNextOrder([team, max], NOW, undefined, SPREAD))).toEqual([
       ["claude-max", "here"],
       ["claude-team", null],
+    ]);
+  });
+
+  it("puts the server's paced pick on top while new agents are spread, and ignores it otherwise", () => {
+    // By spare quota alone the spare account leads, but pacing sends new agents to the default.
+    expect(roles(upNextOrder([team, max], NOW, undefined, { ...SPREAD, paced: "claude-team" }))).toEqual([
+      ["claude-team", "here"],
+      ["claude-max", null],
+    ]);
+    expect(roles(upNextOrder([team, max], NOW, undefined, { ...DEFAULT_FIRST, paced: "claude-team" }))).toEqual([
+      ["claude-max", "switch"],
+      ["claude-team", "start"],
     ]);
   });
 

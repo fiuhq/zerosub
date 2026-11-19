@@ -46,13 +46,13 @@ function badge(account: AccountView, rank: UpNextRank, role: UpNextRole): { labe
   return rank.tier === 2 ? { label: "Nearly full", tone: "warning" } : { label: "Ready", tone: "success" };
 }
 
-export function UpNext({ theme, accounts }: { theme: Theme; accounts: AccountView[] }) {
+export function UpNext({ theme, accounts, paced }: { theme: Theme; accounts: AccountView[]; paced?: string }) {
   const text = useText(theme);
   const lines = useUpNextLines();
   const settings = useSettings(preferences);
   if (accounts.length < 2) return null;
   const now = Date.now();
-  const order = upNextOrder(accounts, now, lines, settings.status === "ready" ? settings.values : DEFAULTS);
+  const order = upNextOrder(accounts, now, lines, { ...(settings.status === "ready" ? settings.values : DEFAULTS), paced });
   return (
     <Card theme={theme}>
       <View accessibilityLabel="Up next" style={{ gap: 8 }}>

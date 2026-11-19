@@ -15,6 +15,7 @@ import {
   type RedeemReply,
   type UsageRead,
 } from "./adapter";
+import { bedrockEnv, bedrockIdentity, isBedrockHome, readBedrockAccount } from "./bedrock";
 import { browserCaptureScript, providerCommand } from "./binaries";
 import { CLAUDE_RESET_PROGRAM, describeResetBlock, parseClaudeResets, readClaimReply } from "./claude-resets";
 import { claudeClearTextProxy, claudeHomeHoldsAccount, prepareClaudeHome, readAccountApi, readAccountProxy, writeAccountApi, writeAccountProxy, type ApiConfig } from "./homes";
@@ -83,6 +84,9 @@ export class ClaudeAdapter implements FamilyAdapter {
     // daemon itself runs with CLAUDE_SECURESTORAGE_CONFIG_DIR set.
     const patch: EnvPatch = { CLAUDE_CONFIG_DIR: home, CLAUDE_SECURESTORAGE_CONFIG_DIR: home };
     for (const key of OVERRIDING_AUTH) if (process.env[key]) patch[key] = "";
+    // An AWS Bedrock account: Claude Code on Bedrock with its AWS credentials (see bedrock.ts). Throws
+    // when its settings can't be read, so the session isn't opened without them.
+    if (isBedrockHome(home)) Object.assign(patch, bedrockEnv(await readBedrockAccount(home)));
     return patch;
   }
 
@@ -108,6 +112,8 @@ export class ClaudeAdapter implements FamilyAdapter {
   }
 
   egress(home: string | null): Promise<{ ip: string; country: string | null } | null> {
+    // Bedrock's requests go to AWS, not Anthropic, so Anthropic's edge has nothing to say about them.
+    if (isBedrockHome(home)) return Promise.resolve(null);
     return claudeEgress(home);
   }
 
@@ -125,6 +131,11 @@ export class ClaudeAdapter implements FamilyAdapter {
   }
 
   async identity(home: string | null): Promise<Identity> {
+    if (isBedrockHome(home)) {
+      // Nothing signs in: the credentials are checked when they're saved, and a refusal is learned from a turn.
+      const account = await readBedrockAccount(home);
+      return { signedIn: true, email: null, plan: "AWS Bedrock", organization: null, identity: bedrockIdentity(account) };
+    }
     const { command, prefix } = await providerCommand("claude");
     const result = await run(command, [...prefix, "auth", "status", "--json"], {
       env: spawnEnv(await this.env(home), "claude"),
@@ -140,10 +151,16 @@ export class ClaudeAdapter implements FamilyAdapter {
     }
     const email = str(status.email);
     const orgId = str(status.orgId);
+    let plan = str(status.subscriptionType);
+    // Claude Code still reports the former Max 20x plan as "max".
+    if (signedIn && plan === "max") {
+      const credentials = await readCredentials(home).catch(() => null);
+      if (credentials?.rateLimitTier === "default_claude_max_20x") plan = "ultra";
+    }
     return {
       signedIn,
       email,
-      plan: str(status.subscriptionType),
+      plan,
       organization: str(status.orgName),
       identity: email ? `${orgId ?? "personal"}|${email.toLowerCase()}` : null,
     };
@@ -151,6 +168,8 @@ export class ClaudeAdapter implements FamilyAdapter {
 
   async usage(home: string | null, options: { renewLogin?: boolean } = {}): Promise<UsageRead> {
     const fetchedAt = new Date().toISOString();
+    // No plan windows: its tokens are counted per turn instead (see Service.countBedrockTurn).
+    if (isBedrockHome(home)) return { fetchedAt, windows: [], error: null, cached: false, resets: null, credits: null };
     let credentials = await readCredentials(home).catch(() => null);
     if (!isFresh(credentials) && options.renewLogin) credentials = await this.renewLogin(home);
     const profileScope = !credentials?.scopes || credentials.scopes.includes("user:profile");
@@ -227,6 +246,7 @@ export class ClaudeAdapter implements FamilyAdapter {
   }
 
   async redeemReset(home: string | null, options: { onlyAtLimit?: boolean } = {}): Promise<RedeemReply> {
+    if (isBedrockHome(home)) return { outcome: "none", message: "AWS Bedrock accounts have no banked resets.", left: 0 };
     let credentials = await readCredentials(home).catch(() => null);
     if (!isFresh(credentials)) credentials = await this.renewLogin(home);
     const token = credentials?.accessToken;
@@ -293,6 +313,7 @@ export class ClaudeAdapter implements FamilyAdapter {
   }
 
   async login(home: string | null, _method: LoginMethod): Promise<LoginHandle> {
+    if (isBedrockHome(home)) throw new Error("AWS Bedrock accounts use AWS credentials: change them from the account's card.");
     const { command, prefix } = await providerCommand("claude");
     const shim = await browserCaptureScript();
     const capture = join(tmpdir(), `zerosub-login-${randomBytes(6).toString("hex")}.url`);
@@ -305,13 +326,22 @@ export class ClaudeAdapter implements FamilyAdapter {
   }
 
   async logout(home: string): Promise<void> {
+    // Nothing is signed in: deleting the home (and its bedrock.json) is all removing it takes.
+    if (isBedrockHome(home)) return;
     const { command, prefix } = await providerCommand("claude");
     const result = await run(command, [...prefix, "auth", "logout"], { env: spawnEnv(await this.env(home), "claude"), timeoutMs: 30_000 });
-    if (result.code === 0 || process.platform !== "darwin") return; // Elsewhere the login lives in the home itself.
-    // Don't leave a live refresh token behind in the keychain for a home that is about to be deleted.
-    await run("/usr/bin/security", ["delete-generic-password", "-a", keychainAccount(), "-s", keychainService(home)], {
+    if (process.platform !== "darwin") return; // Elsewhere the login lives in the home itself.
+    // Don't leave a live refresh token behind in the keychain for a home that is about to be deleted. The
+    // CLI's logout exits 0 even when its own delete of the entry failed, so the entry is checked either way.
+    const service = keychainService(home);
+    const removed = await run("/usr/bin/security", ["delete-generic-password", "-a", keychainAccount(), "-s", service], {
       timeoutMs: 10_000,
     });
+    if (removed.code === 0 || removed.code === KEYCHAIN_ITEM_NOT_FOUND) return;
+    // Thrown so the cleanup tries again later, rather than deleting the home over a live entry.
+    const why = removed.timedOut ? "timed out" : removed.stderr.trim() || `exit ${removed.code}`;
+    const signedOut = result.code === 0 ? "Signed" : "Couldn't sign";
+    throw new Error(`${signedOut} ${home} out, but couldn't remove its keychain entry "${service}" (${why})`);
   }
 
   /**
@@ -542,6 +572,7 @@ interface Credentials {
   accessToken: string | null;
   expiresAt: number | null;
   scopes: string[] | null;
+  rateLimitTier: string | null;
 }
 
 function keychainAccount(): string {
@@ -640,6 +671,7 @@ function parseCredentials(raw: string): Credentials | null {
   if (!oauth) return null;
   return {
     accessToken: str(oauth.accessToken),
+    rateLimitTier: str(oauth.rateLimitTier),
     expiresAt: typeof oauth.expiresAt === "number" ? oauth.expiresAt : null,
     scopes: Array.isArray(oauth.scopes) ? oauth.scopes.filter((scope): scope is string => typeof scope === "string") : null,
   };

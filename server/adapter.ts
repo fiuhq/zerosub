@@ -48,6 +48,11 @@ export interface LimitHit {
    * as out once a fresh usage reading shows a full window.
    */
   suspected?: boolean;
+  /**
+   * The lowercase model name a limit is scoped to ("fable", "opus"): the limit of that model's own
+   * window, which leaves the account usable for other models. Null for a limit of the whole account.
+   */
+  scope?: string | null;
 }
 
 /** A finished turn, as Paseo reports it. */

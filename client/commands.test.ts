@@ -13,6 +13,7 @@ function account(status: AccountView["status"], nextAgentUntil: string | null): 
     plan: null,
     organization: null,
     status,
+    disabled: status === "disabled",
     isDefault: false,
     nextAgentUntil,
     limitedUntil: null,
@@ -33,7 +34,10 @@ function account(status: AccountView["status"], nextAgentUntil: string | null): 
     egress: null,
     externalHome: false,
     moving: null,
+    pace: null,
     azure: null,
+    bedrock: null,
+    apiError: null,
   };
 }
 
