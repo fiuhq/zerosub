@@ -61,6 +61,7 @@ function commandCenter(accounts: AccountView[]) {
     showComposerPill: false,
     openCodeAvailable: false,
     autoSwitch: true,
+    autoContinue: true,
     warnings: [],
     launchers: null,
     piLaunchers: null,

@@ -1,5 +1,5 @@
 import { accountPeak } from "../shared/format";
-import { isAzureAccount, isBedrockAccount, PACE_GATE_PERCENT, type Family, type PaceView, type Usage, type UsageWindow } from "../shared/model";
+import { isAzureAccount, isBedrockAccount, onAnthropicApi, PACE_GATE_PERCENT, WEEK_NEARLY_USED_PERCENT, type Family, type PaceView, type Usage, type UsageWindow } from "../shared/model";
 import { compareUpNext, isLongWindow, upNextRank } from "../shared/up-next";
 import { FIVE_HOUR_MINUTES, WEEK_MINUTES } from "./codex";
 import {
@@ -97,6 +97,32 @@ export function isLastResort(account: StoredAccount): boolean {
 }
 
 /**
+ * An account `paidApiFallback` lets routing move work onto by itself once no subscription account of
+ * the family can stand in: a marked stand-in (`isLastResort`), whatever `paidApi` (the preference)
+ * says, as on main; and, only with it on, a Claude account on an API key or token that goes to
+ * Anthropic's own API (`keyOnAnthropicApi`). Like the marked ones, it's billed per use, it's left
+ * again once a subscription account has room, and it can always be picked by hand, or made the
+ * default. With the preference off, a Claude key is an account like any other the user chose, and a
+ * key on another endpoint (a gateway or a third-party service) always is: whole conversations don't
+ * go there unasked. A Pi account never stands in (see `canStandIn`). Only the marked ones have their
+ * own settings form, error and token counts (see `isLastResort`).
+ */
+export function isPaidStandIn(account: StoredAccount, paidApi: boolean): boolean {
+  return isLastResort(account) || (paidApi && account.family === "claude" && account.auth === "api" && keyOnAnthropicApi(account));
+}
+
+/**
+ * Whether a Claude API-key account's key goes to Anthropic's own API, as its identity records it:
+ * `api|<where>|<hash>`, where is `anthropic` (or Anthropic's URL, as earlier versions saved it) or
+ * the base URL. A kept key can't move to another base URL without being typed again, which saves a
+ * new identity, so this holds. An account without an identity counts as elsewhere.
+ */
+export function keyOnAnthropicApi(account: StoredAccount): boolean {
+  const [kind, where] = account.identity?.split("|") ?? [];
+  return kind === "api" && where !== undefined && (where === "anthropic" || onAnthropicApi(where));
+}
+
+/**
  * Lower is better. Unknown usage ranks in the middle so a known-quiet account wins over a mystery.
  * A full window of one model only, such as "Weekly · Opus", leaves the account its room for the rest.
  * A window whose reset has passed since the reading starts again empty, so an account that just
@@ -138,6 +164,8 @@ export interface PaceScore {
   weekly: number;
   score: number;
   gated: boolean;
+  /** The week has used WEEK_NEARLY_USED_PERCENT or more and hasn't reset. */
+  weekHeld: boolean;
 }
 
 export function weeklyWindow(usage: Usage): UsageWindow | undefined {
@@ -153,7 +181,7 @@ export function paceScore(usage: Usage | null | undefined, pending: number, now:
   const long = usage ? weeklyWindow(usage) : undefined;
   if (!usage || usage.windows.length === 0 || (!short && !long)) {
     const fiveHour = UNKNOWN_SCORE + fiveCharge;
-    return { fiveHour, weekly: 0, score: fiveHour, gated: fiveHour >= FIVE_HOUR_GATE_PERCENT };
+    return { fiveHour, weekly: 0, score: fiveHour, gated: fiveHour >= FIVE_HOUR_GATE_PERCENT, weekHeld: false };
   }
   const parsed = Date.parse(usage.fetchedAt);
   const fetched = Number.isFinite(parsed) ? Math.min(parsed, now) : now;
@@ -183,6 +211,7 @@ export function paceScore(usage: Usage | null | undefined, pending: number, now:
     weekly,
     score: Math.max(fiveHour, weekly),
     gated: fiveHourGated(usage, now) || fiveHour >= FIVE_HOUR_GATE_PERCENT,
+    weekHeld: !!long && Number.isFinite(long.usedPercent) && !expired(long) && long.usedPercent >= WEEK_NEARLY_USED_PERCENT,
   };
 }
 
@@ -229,11 +258,11 @@ function withPending(usage: Usage | null | undefined, pending: number): Usage | 
  * The usable account first in Up next, preferring the default, then the CLI login, on ties. Up next
  * puts an account at its short (5-hour) switch line, 80% by default, behind every account under it,
  * as `fiveHourGated` does, and one with a full window that caps it last. With `pacing` (balanced new
- * agents), an account its pending agents would carry past the 5-hour gate (`paceScore`) goes behind
- * every account they wouldn't, before Up next orders each group; a full window that caps an account
- * still ranks it last, gate or not.
+ * agents), an account its pending agents would carry past the 5-hour gate (`paceScore`), or one that
+ * has used `WEEK_NEARLY_USED_PERCENT` of its week, goes behind every account that hasn't, before Up
+ * next orders each group; a full window that caps an account still ranks it last, gate or not.
  *
- * With `paidFallback` (the `paidApiFallback` preference), a usable paid API account (`isLastResort`)
+ * With `paidFallback` (the `paidApiFallback` preference), a usable paid API account (`isPaidStandIn`)
  * is chosen once no subscription account can stand in; without it, never.
  */
 export function mostAvailable(
@@ -251,10 +280,11 @@ export function mostAvailable(
   const open = accountsOf(state, family).filter((account) => !exclude.has(account.id));
   const subscriptions = open.filter((account) => canStandIn(account, now, model));
   const candidates =
-    subscriptions.length > 0 || !paidFallback ? subscriptions : open.filter((account) => isLastResort(account) && isUsable(account, now, model));
+    subscriptions.length > 0 || !paidFallback ? subscriptions : open.filter((account) => isPaidStandIn(account, paidFallback) && isUsable(account, now, model));
   // Pacing (balanced new agents): readings lag behind the agents just placed, so each pending one counts
-  // as used in Up next, and an account they would carry past the 5-hour gate goes behind every account
-  // they wouldn't. Fewer pending agents break a tie, so a burst of new agents spreads.
+  // as used in Up next, and an account they would carry past the 5-hour gate, or whose week is nearly
+  // used, goes behind every account they wouldn't. Fewer pending agents break a tie, so a burst of new
+  // agents spreads.
   const pendingOf = (account: StoredAccount) => pacing?.pendingOf(account.id) ?? 0;
   const ranks = new Map(
     candidates.map((account) => [account.id, upNextRank(withPending(usageOf(account.id), pendingOf(account)), now, lines ?? undefined)]),
@@ -262,7 +292,8 @@ export function mostAvailable(
   const tier = new Map(
     candidates.map((account) => {
       const usage = usageOf(account.id);
-      return [account.id, headroomScore(usage, now) >= 100 ? 2 : pacing && paceScore(usage, pendingOf(account), now).gated ? 1 : 0];
+      const pace = pacing ? paceScore(usage, pendingOf(account), now) : undefined;
+      return [account.id, headroomScore(usage, now) >= 100 ? 2 : pace && (pace.gated || pace.weekHeld) ? 1 : 0];
     }),
   );
   const rank = (account: StoredAccount) => [
@@ -447,6 +478,12 @@ export interface RouteInput {
   /** A paid API account may stand in once every subscription account is out (`paidApiFallback`). */
   paidFallback?: boolean;
   /**
+   * The `paidApiFallback` preference itself, which decides whether a Claude API key is a paid
+   * stand-in at all (see `isPaidStandIn`); `paidFallback` when left out. `paidFallback` may be off
+   * for one agent (Claude's Auto mode, which Bedrock can't run) while the key it's on still is one.
+   */
+  paidApi?: boolean;
+  /**
    * Banked resets are spent when every account is out (`autoRedeem`). With it, a new agent opens on a
    * limited subscription with a usable reset before a paid stand-in (see `withBankedReset`).
    */
@@ -502,6 +539,10 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     ? { pendingOf: (id) => input.pendingOf?.(id) ?? 0 }
     : undefined;
 
+  // Whether an account is a paid stand-in, by the preference rather than this one choice's `paidFallback`.
+  const paidApi = input.paidApi ?? input.paidFallback ?? false;
+  const standIn = (candidate: StoredAccount) => isPaidStandIn(candidate, paidApi);
+
   const binding = state.bindings[input.agentId];
   const bound = findAccount(state, binding?.accountId);
   let account = bound && bound.family === input.family ? bound : undefined;
@@ -511,8 +552,9 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   // Claude while every subscription was out) only holds it until a subscription account can take it:
   // one with room, or, with `autoRedeem`, a limited one with a banked reset to spend. Then the agent
   // routes as an unbound one would, and alignment takes it off the bill. One the user put there stays.
+  // A binding marked as a stand-in's is let go of the same way after the setting is turned off.
   if (
-    account && binding?.source === "auto" && input.portable && isLastResort(account) &&
+    account && binding?.source === "auto" && input.portable && (standIn(account) || binding.standIn === true) &&
     (accounts.some((other) => canStandIn(other, input.now, input.model)) || (input.autoRedeem && withBankedReset(state, input.family, input.usageOf, input.now)))
   ) {
     account = undefined;
@@ -552,12 +594,12 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     const nearReset = input.family === "codex" ? soonestWeeklyReset(state, input.family, input.usageOf, input.now, kept) : undefined;
     account = nearReset ?? mostAvailable(state, input.family, input.usageOf, input.now, kept, input.early, input.paidFallback, pacing, input.model);
     // A banked reset is free, so it goes before a paid stand-in, as it does when a turn hits a limit.
-    if (account && isLastResort(account) && input.autoRedeem) {
+    if (account && standIn(account) && input.autoRedeem) {
       account = withBankedReset(state, input.family, input.usageOf, input.now, kept) ?? account;
     }
     // An agent that can move isn't bound to a paid stand-in (Bedrock): it's only there until a
     // subscription account has room. A thread that can't move (Azure's) is, as it lives there.
-    if (account && !(input.portable && isLastResort(account))) {
+    if (account && !(input.portable && standIn(account))) {
       bind = { accountId: account.id, source: "balance", at, selectionReason: nearReset ? "weekly_reset" : "headroom" };
     }
   }
@@ -586,16 +628,16 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     const staying = findAccount(state, input.current);
     // A paid stand-in is only kept while no subscription account could take over from it.
     const keeps = (stand: StoredAccount) =>
-      !isLastResort(stand) ||
+      !standIn(stand) ||
       !accountsOf(state, input.family).some((other) => other.id !== account!.id && !reserved.has(other.id) && canStandIn(other, input.now, input.model));
-    const stays = (stand: StoredAccount) => canStandIn(stand, input.now, input.model) || (isLastResort(stand) && isUsable(stand, input.now, input.model));
+    const stays = (stand: StoredAccount) => canStandIn(stand, input.now, input.model) || (standIn(stand) && isUsable(stand, input.now, input.model));
     let alternative =
       staying && staying.family === input.family && staying.id !== account.id && stays(staying) && !reserved.has(staying.id) && keeps(staying)
         ? staying
         : mostAvailable(state, input.family, input.usageOf, input.now, new Set([...reserved, account.id]), input.early, input.paidFallback, pacing, input.model);
     // Before a paid stand-in, a limited subscription with a usable banked reset: the account itself
     // (it stays, and its first turn spends the reset) or another one.
-    if (alternative && isLastResort(alternative) && input.autoRedeem) {
+    if (alternative && standIn(alternative) && input.autoRedeem) {
       const banked = withBankedReset(state, input.family, input.usageOf, input.now, reserved);
       if (banked) alternative = banked.id === account.id ? undefined : banked;
     }
@@ -608,7 +650,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
       bind =
         !input.portable
           ? { accountId: alternative.id, source: "thread", at }
-          : why === "disabled" || isLastResort(alternative)
+          : why === "disabled" || standIn(alternative)
             ? null
             : { accountId: alternative.id, source: "auto", at };
     }
