@@ -1059,13 +1059,21 @@ describe("forking to the other provider", () => {
 
   describe("a ChatGPT chat continued on Claude that lands on AWS Bedrock", () => {
     const BEDROCK = "claude-bedrock";
-    /** Every subscription out, paid fallback on: a ChatGPT agent's limit continues it on Claude, on Bedrock. */
-    async function forkOntoBedrock(by: "auto" | "user") {
+    const KEY = "claude-key";
+    /**
+     * Every subscription out, paid fallback on: a ChatGPT agent's limit continues it on Claude, on Bedrock
+     * or, given `onto`, on a Claude key on Anthropic's own API.
+     */
+    async function forkOntoBedrock(by: "auto" | "user", onto: "bedrock" | "key" = "bedrock") {
       const t = await setUpFork("full-access", [], {}, [], { prefs: { paidApiFallback: true }, sourceProvider: "codex" });
       const limit = { limitedUntil: inFuture(), limitKind: "window" as const, limitedAt: new Date().toISOString() };
       await t.store.update((draft) => {
         for (const entry of draft.accounts) Object.assign(entry, limit);
-        draft.accounts.push({ ...account(BEDROCK, "bedrock", "managed"), auth: "api", provider: "bedrock", identity: "bedrock|eu-central-1|host" } as never);
+        draft.accounts.push(
+          (onto === "bedrock"
+            ? { ...account(BEDROCK, "bedrock", "managed"), auth: "api", provider: "bedrock", identity: "bedrock|eu-central-1|host" }
+            : { ...account(KEY, "key", "managed"), auth: "api", identity: "api|anthropic|0123456789abcdef" }) as never,
+        );
         draft.sessions[AGENT] = { accountId: CODEX_MAIN, family: "codex", openedAt: new Date().toISOString() };
       });
       if (by === "auto") {
@@ -1081,7 +1089,7 @@ describe("forking to the other provider", () => {
       expect(t.created[0]!.config.provider.startsWith("claude")).toBe(true);
       // Its session opens where it was bound.
       await t.service.onSessionOpen({ agentId: forkId, provider: "claude", reason: "create", purpose: "interactive", env: {}, workspaceId: "ws-1", cwd: root } as never, { paseo: t.paseo } as never);
-      expect((await t.store.read()).sessions[forkId]?.accountId).toBe(BEDROCK);
+      expect((await t.store.read()).sessions[forkId]?.accountId).toBe(onto === "bedrock" ? BEDROCK : KEY);
       return { ...t, forkId };
     }
 
@@ -1114,6 +1122,21 @@ describe("forking to the other provider", () => {
       expect((await t.store.read()).sessions[t.forkId]?.accountId).toBe(MAIN);
       expect(t.notes.at(-1)).toMatchObject({ reason: "room", to: "marketing" });
     });
+
+    it.each(["auto", "user"] as const)(
+      "on a Claude key instead (fork asked for by %s), still moves back once a Claude subscription has room after the setting is turned off",
+      async (by) => {
+        vi.spyOn(console, "log").mockImplementation(() => undefined);
+        const t = await forkOntoBedrock(by, "key");
+        // Marked as ZeroSub's own doing: with the setting off the key is no stand-in, so the mark is what's left.
+        expect((await t.store.read()).bindings[t.forkId]).toMatchObject({ accountId: KEY, source: "auto", standIn: true });
+        t.service.setPreferences(preferences.schema.parse({ forkOtherProvider: true }));
+        const summary = await alignWithRoom(t);
+        expect(summary.reopened).toEqual([t.forkId]);
+        expect((await t.store.read()).sessions[t.forkId]?.accountId).toBe(MAIN);
+        expect(t.notes.at(-1)).toMatchObject({ reason: "room", to: "marketing" });
+      },
+    );
 
     it("stays when the user has since picked Bedrock for it", async () => {
       vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -3211,11 +3234,11 @@ describe("changing the default account", () => {
 
   describe("moving idle agents off a busy account", () => {
     const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-    const reading = (percent: number): UsageRead => ({
+    const reading = (percent: number, week = 10): UsageRead => ({
       fetchedAt: new Date().toISOString(),
       windows: [
         { id: "five_hour", label: "5-hour", usedPercent: percent, resetsAt: new Date(Date.now() + 3 * 60 * 60_000).toISOString(), minutes: 300 },
-        { id: "seven_day", label: "Weekly", usedPercent: 10, resetsAt: new Date(Date.now() + 3 * 24 * 60 * 60_000).toISOString(), minutes: 10_080 },
+        { id: "seven_day", label: "Weekly", usedPercent: week, resetsAt: new Date(Date.now() + 3 * 24 * 60 * 60_000).toISOString(), minutes: 10_080 },
       ],
       error: null,
       cached: false,
@@ -3228,6 +3251,8 @@ describe("changing the default account", () => {
       updatedAt: string,
       options: {
         personal?: number;
+        /** `personal`'s weekly percent. */
+        personalWeek?: number;
         prefs?: Record<string, unknown>;
         bindings?: StoredState["bindings"];
         onList?: (service: Service) => void | Promise<void>;
@@ -3255,7 +3280,7 @@ describe("changing the default account", () => {
           claude: {
             usage: async (home: string | null) => {
               const byHome = (options.accounts ?? []).find((entry) => entry.home === home);
-              return home ? reading(options.usedBy?.[byHome?.id ?? ""] ?? options.personal ?? 20) : reading(60);
+              return home ? reading(options.usedBy?.[byHome?.id ?? ""] ?? options.personal ?? 20, options.personalWeek) : reading(60);
             },
           } as Partial<FamilyAdapter>,
           onList: options.onList,
@@ -3278,6 +3303,21 @@ describe("changing the default account", () => {
       expect(state.bindings["fix-build"]).toMatchObject({ accountId: HELLO, source: "auto" });
       expect(state.sessions["fix-build"]?.accountId).toBe(HELLO);
       expect(notes).toContainEqual({ agentId: "fix-build", data: expect.objectContaining({ reason: "pacing", from: "work", to: "personal" }) });
+    });
+
+    it("moves at most three agents in one pass", async () => {
+      const { reopened } = await setUpBusy("a1", ago(120), { others: ["a2", "a3", "a4", "a5"] });
+      expect(reopened).toHaveLength(3);
+    });
+
+    it("leaves an agent where it is when the other account has used 90% of its week", async () => {
+      const { reopened } = await setUpBusy("fix-build", ago(120), { personalWeek: 90 });
+      expect(reopened).toEqual([]);
+    });
+
+    it("leaves an agent idle for more than a day", async () => {
+      const { reopened } = await setUpBusy("old-spike", ago(26 * 60));
+      expect(reopened).toEqual([]);
     });
 
     it("leaves an agent used in the last hour", async () => {
@@ -3385,7 +3425,7 @@ describe("changing the default account", () => {
 
     it("stops moving agents once the account they go to would reach the gate", async () => {
       const others = ["agent-2", "agent-3", "agent-4", "agent-5", "agent-6"];
-      const { service, reopened } = await setUpBusy("fix-build", ago(120), { others });
+      const { service, reopened } = await setUpBusy("fix-build", ago(120), { others, personal: 45 });
       expect(reopened.length).toBeGreaterThan(0);
       expect(reopened.length).toBeLessThan(others.length + 1);
       const usage = (service as unknown as { usage: Map<string, Usage> }).usage.get(HELLO);
@@ -4717,6 +4757,36 @@ describe("answering before Paseo gives up", () => {
     expect(spent).toBe(1);
   });
 
+  it.each([
+    [true, "Still using the reset on marketing. Its limits show here once it's done, and the agent carries on; don't use another."],
+    [false, "Still using the reset on marketing. Its limits show here once it's done; don't use another."],
+  ])("says the agent carries on after a slow reset only when Keep going is on (%s)", async (autoContinue, message) => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { service, paseo, sent } = await setUp(onMarketing(), hit, {
+      claude: {
+        redeemReset: async () => {
+          await gate;
+          return { outcome: "reset", message: "Limits reset.", left: 0 };
+        },
+      },
+      // The agent's last turn did stop at the limit.
+      recent: inTurn("t", { type: "assistant_message", text: "You've hit your session limit · resets 3pm" }),
+      detectLimit: detectClaudeLimit,
+    });
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true, autoContinue }));
+    const asked = service.redeem(paseo as never, MAIN, AGENT);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await asked).toEqual({ outcome: "pending", message, left: null, continued: false });
+
+    release();
+    if (autoContinue) await vi.waitFor(() => expect(sent).toHaveLength(1));
+    else {
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sent).toEqual([]);
+    }
+  });
+
   it("answers a usage refresh that has to renew a sign-in", async () => {
     let release = () => {};
     const gate = new Promise<void>((resolve) => (release = resolve));
@@ -4738,6 +4808,10 @@ describe("answering before Paseo gives up", () => {
     const read: Array<string | null> = [];
     const { service, paseo } = await setUp(onMarketing(), hit, {
       claude: {
+        identity: async (home) => ({
+          signedIn: true, email: null, organization: null, identity: null,
+          plan: home ? "max" : "ultra",
+        }),
         usage: async (home: string | null) => {
           read.push(home);
           return { fetchedAt: new Date().toISOString(), windows: [], error: null, cached: false, resets: null };
@@ -4745,7 +4819,9 @@ describe("answering before Paseo gives up", () => {
       },
     });
     read.length = 0;
-    await service.view(paseo as never, true, HELLO);
+    const view = await service.view(paseo as never, true, HELLO);
+    expect(view.accounts.find((entry) => entry.id === HELLO)?.plan).toBe("max");
+    expect(view.accounts.find((entry) => entry.id === MAIN)?.plan).not.toBe("ultra");
     expect(read).toEqual([join(tmpdir(), HELLO)]);
   });
 });
@@ -5116,6 +5192,10 @@ describe("forking to the other provider by hand", () => {
     const api = { ...account("claude-api", "gateway", "managed"), auth: "api" };
     await expect(refusal([limited, api])).rejects.toThrow(/only Claude accounts with room use an API key/);
     await expect(refusal([limited])).rejects.toThrow("Every Claude account is at its limit too.");
+    // The setting is suggested only where it would let the key take over: one on Anthropic's own API.
+    const setting = /turn on "Use paid API accounts when every subscription is out"/;
+    await expect(refusal([limited, { ...api, identity: "api|https://gw.example.com|0123456789abcdef" }])).rejects.toThrow(/pick it from the agent's account button\.$/);
+    await expect(refusal([limited, { ...api, identity: "api|anthropic|0123456789abcdef" }])).rejects.toThrow(setting);
   });
 });
 
@@ -5613,5 +5693,182 @@ describe("one model's limit", () => {
       expect(reopened).toEqual([]);
       expect((await store.read()).bindings[AGENT]).toBeUndefined();
     });
+  });
+});
+
+describe("a Claude API key as the last resort", () => {
+  const window = () => ({ kind: "window" as const, resetsAt: inFuture(), message: "You've hit your session limit" });
+  const keyed = { ...account("claude-key", "key", "managed"), auth: "api" as const, identity: "api|anthropic|0123456789abcdef" };
+  const onlyMain = { accounts: [account(MAIN, "main", "main"), keyed] as never, defaults: { claude: MAIN, codex: null, pi: null }, sessions: {} };
+
+  it("isn't used with paid API fallback off (the default): the agent stays at its limit", async () => {
+    const { store, reopened, notes, limitTurn } = await setUp(onlyMain, window);
+    await limitTurn();
+    expect((await store.read()).sessions[AGENT]?.accountId).not.toBe(keyed.id);
+    expect(reopened).toEqual([]);
+    expect(notes.at(-1)).toMatchObject({ outcome: "stayed" });
+  });
+
+  it("with it on, takes a limited agent over in place, says it's billed per use, doesn't pin it there, and leaves once the subscription has room", async () => {
+    const { service, store, reopened, notes, limitTurn, paseo } = await setUp(onlyMain, window);
+    service.setPreferences(preferences.schema.parse({ paidApiFallback: true }));
+    await limitTurn();
+    const state = await store.read();
+    expect(state.sessions[AGENT]?.accountId).toBe(keyed.id);
+    expect(reopened).toEqual([AGENT]);
+    expect(state.bindings[AGENT]?.accountId).not.toBe(keyed.id);
+    expect(notes.at(-1)).toMatchObject({ to: "key", outcome: "switched" });
+    expect(notes.at(-1)?.detail).toMatch(/: an API key, billed per use\. It moves back to a Claude account once one has room\./);
+
+    await service.clearLimit(MAIN);
+    // Past the minute after its turn that alignment leaves an agent alone for.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 60_000 });
+    try {
+      await service.alignSessions(paseo as never);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(MAIN);
+  });
+
+  it("with it on, still isn't used when the key goes to another endpoint", async () => {
+    const gateway = { ...keyed, identity: "api|https://gw.example.com|0123456789abcdef" };
+    const { service, store, reopened, notes, limitTurn } = await setUp({ ...onlyMain, accounts: [account(MAIN, "main", "main"), gateway] as never }, window);
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true, paidApiFallback: true }));
+    await limitTurn();
+    expect((await store.read()).sessions[AGENT]?.accountId).not.toBe(gateway.id);
+    expect(reopened).toEqual([]);
+    expect(notes.at(-1)).toMatchObject({ outcome: "stayed" });
+  });
+
+  it("doesn't say it's there for want of a subscription when the key is where the agent routes anyway", async () => {
+    // The key is the default; the agent ran on the CLI login (picked once, say) until that hit its limit.
+    const { service, store, notes, limitTurn } = await setUp(
+      { ...onlyMain, defaults: { claude: keyed.id, codex: null, pi: null }, sessions: { [AGENT]: { accountId: MAIN, family: "claude", openedAt: "2026-09-23T07:00:00.000Z" } } },
+      window,
+    );
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true, paidApiFallback: true }));
+    await limitTurn();
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(keyed.id);
+    expect(notes.at(-1)).toMatchObject({ to: "key", outcome: "switched" });
+    expect(notes.at(-1)?.detail ?? null).toBeNull();
+  });
+
+  it("still moves an agent paid fallback put on the key back once the subscription has room, after the setting is turned off", async () => {
+    const { service, store, limitTurn, paseo } = await setUp(onlyMain, window);
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true, paidApiFallback: true }));
+    await limitTurn();
+    expect((await store.read()).sessions[AGENT]).toMatchObject({ accountId: keyed.id, standIn: true });
+
+    // Off while the subscription is still out: nothing better to go to, so it stays where it can work.
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true }));
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 60_000 });
+    try {
+      await service.alignSessions(paseo as never);
+      expect((await store.read()).sessions[AGENT]?.accountId).toBe(keyed.id);
+
+      // Then the subscription has room again: alignment takes the agent off the bill, as with Bedrock.
+      await service.clearLimit(MAIN);
+      vi.setSystemTime(Date.now() + 2 * 60_000);
+      await service.alignSessions(paseo as never);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(MAIN);
+  });
+
+  it("still moves an agent kept on the key when the default changed back once the new default has room, after the setting is turned off", async () => {
+    // Two subscriptions, both out: the limit puts the agent on the key, and the default then moves to
+    // the other subscription with "move agents on default change" off, which keeps it on the key.
+    const work = { ...account("claude-work", "work", "managed"), limitedUntil: inFuture(), limitKind: "window" as const, limitedAt: new Date().toISOString() };
+    const { service, store, limitTurn, paseo } = await setUp({ ...onlyMain, accounts: [account(MAIN, "main", "main"), work, keyed] as never }, window);
+    const keep = { autoSwitch: true, moveAgentsOnDefaultChange: false };
+    service.setPreferences(preferences.schema.parse({ ...keep, paidApiFallback: true }));
+    await limitTurn();
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(keyed.id);
+    await service.setDefault(paseo as never, work.id);
+    expect((await store.read()).bindings[AGENT]).toMatchObject({ accountId: keyed.id, source: "auto", standIn: true });
+
+    service.setPreferences(preferences.schema.parse(keep));
+    await service.clearLimit(work.id);
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 60_000 });
+    try {
+      await service.alignSessions(paseo as never);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(work.id);
+  });
+
+  it("still moves an agent kept on the key when the default changed after the setting was turned off, once the new default has room", async () => {
+    // As above, with the setting turned off before the default moves: the binding that keeps the agent
+    // on the key is still ZeroSub's, because paid fallback opened its session there.
+    const work = { ...account("claude-work", "work", "managed"), limitedUntil: inFuture(), limitKind: "window" as const, limitedAt: new Date().toISOString() };
+    const { service, store, limitTurn, paseo } = await setUp({ ...onlyMain, accounts: [account(MAIN, "main", "main"), work, keyed] as never }, window);
+    const keep = { autoSwitch: true, moveAgentsOnDefaultChange: false };
+    service.setPreferences(preferences.schema.parse({ ...keep, paidApiFallback: true }));
+    await limitTurn();
+    expect((await store.read()).sessions[AGENT]).toMatchObject({ accountId: keyed.id, standIn: true });
+
+    service.setPreferences(preferences.schema.parse(keep));
+    await service.setDefault(paseo as never, work.id);
+    expect((await store.read()).bindings[AGENT]).toMatchObject({ accountId: keyed.id, source: "auto", standIn: true });
+    await service.clearLimit(work.id);
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 60_000 });
+    try {
+      await service.alignSessions(paseo as never);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(work.id);
+  });
+
+  it("says why when an agent ZeroSub bound to the key goes back onto it, with the setting off", async () => {
+    // Bound there by an earlier fallback (`standIn`), and every subscription is out again.
+    const { service, store, notes, limitTurn } = await setUp(
+      { ...onlyMain, bindings: { [AGENT]: { accountId: keyed.id, source: "auto", at: "2026-09-23T07:00:00.000Z", standIn: true } } } as never,
+      window,
+    );
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true }));
+    await limitTurn();
+    expect((await store.read()).sessions[AGENT]).toMatchObject({ accountId: keyed.id, standIn: true });
+    expect(notes.at(-1)?.detail).toMatch(/: an API key, billed per use\. It moves back to a Claude account once one has room\./);
+  });
+
+  it("with it on, moves an agent off Bedrock onto the key the user picked for it, as on main", async () => {
+    // The key is the agent's own route, so it's where the agent belongs, not more of the bill.
+    const bedrock = { ...account("claude-bedrock", "bedrock", "managed"), auth: "api" as const, provider: "bedrock" as const, identity: "bedrock|eu-central-1|host" };
+    const { service, store, paseo } = await setUp(
+      {
+        ...onlyMain,
+        accounts: [account(MAIN, "main", "main"), keyed, bedrock] as never,
+        bindings: { [AGENT]: { accountId: keyed.id, source: "user", at: "2026-09-23T07:00:00.000Z" } },
+        sessions: { [AGENT]: { accountId: bedrock.id, family: "claude", openedAt: "2026-09-23T07:00:00.000Z" } },
+      } as never,
+      window,
+    );
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true, paidApiFallback: true }));
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 60_000 });
+    try {
+      await service.alignSessions(paseo as never);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(keyed.id);
+  });
+
+  it("leaves an agent the user put on the key there when the setting is turned off, as on main", async () => {
+    const { service, store, paseo } = await setUp(
+      { ...onlyMain, bindings: { [AGENT]: { accountId: keyed.id, source: "user", at: "2026-09-23T07:00:00.000Z" } }, sessions: { [AGENT]: { accountId: keyed.id, family: "claude", openedAt: "2026-09-23T07:00:00.000Z" } } } as never,
+      window,
+    );
+    service.setPreferences(preferences.schema.parse({ autoSwitch: true }));
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 60_000 });
+    try {
+      await service.alignSessions(paseo as never);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect((await store.read()).sessions[AGENT]?.accountId).toBe(keyed.id);
   });
 });

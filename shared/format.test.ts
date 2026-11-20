@@ -3,22 +3,29 @@ import {
   paceVerdict,
   accountSubtitle,
   apiUsageLines,
+  canStandIn,
+  paidStandIn,
   describeReopen,
+  egressText,
   formatAge,
   formatCredits,
   formatTokens,
+  formatCountdown,
   formatExtraUsage,
   formatPlan,
+  formatResetAt,
   formatResetIn,
   isDisabled,
   moveProblem,
   peakUsage,
   pillText,
+  reportsUsage,
   shortLabel,
+  shortWindowLabel,
   staleNotice,
   usageSummary,
 } from "./format";
-import type { AccountView } from "./model";
+import { onAnthropicApi, type AccountView } from "./model";
 
 const NOW = Date.parse("2026-09-23T12:00:00Z");
 
@@ -31,6 +38,80 @@ describe("formatResetIn", () => {
     expect(formatResetIn("2026-09-23T11:00:00Z", NOW)).toBe("now");
     expect(formatResetIn(null, NOW)).toBeNull();
     expect(formatResetIn("not a date", NOW)).toBeNull();
+  });
+});
+
+describe("formatResetAt", () => {
+  // Local times, so it reads the same in every time zone. 28 October 2026 is a Wednesday.
+  const now = new Date(2026, 9, 28, 15, 20).getTime();
+  const at = (...parts: [number, number, number, number, number, number?, number?]) => new Date(...parts).toISOString();
+
+  it("gives the time today, the weekday within the week, and the date a week on", () => {
+    expect(formatResetAt(at(2026, 9, 28, 18, 0), now)).toBe("18:00");
+    expect(formatResetAt(at(2026, 9, 29, 2, 5), now)).toBe("Thu 02:05");
+    expect(formatResetAt(at(2026, 10, 3, 9, 0), now)).toBe("Tue 09:00");
+    // Today's weekday again: the date says it isn't today.
+    expect(formatResetAt(at(2026, 10, 4, 9, 0), now)).toBe("Nov 4 09:00");
+  });
+
+  it("rounds to the minute, so readings a moment apart read the same", () => {
+    expect(formatResetAt(at(2026, 9, 28, 17, 59, 59, 600), now)).toBe("18:00");
+  });
+
+  it("has nothing to say once the time has passed, or when there's none", () => {
+    expect(formatResetAt(at(2026, 9, 28, 15, 0), now)).toBeNull();
+    expect(formatResetAt(null, now)).toBeNull();
+    expect(formatResetAt("not a date", now)).toBeNull();
+  });
+});
+
+describe("formatCountdown", () => {
+  const now = Date.parse("2026-10-28T12:00:00Z");
+  it("counts hours and minutes, days and hours from a day on, as the status line does", () => {
+    expect(formatCountdown("2026-10-28T15:26:40Z", now)).toBe("3h26m");
+    expect(formatCountdown("2026-10-29T05:26:00Z", now)).toBe("17h26m");
+    expect(formatCountdown("2026-10-30T05:40:00Z", now)).toBe("1d17h");
+    expect(formatCountdown("2026-10-28T12:26:00Z", now)).toBe("26m");
+    // Each unit is written even when it's nothing, so every entry reads alike.
+    expect(formatCountdown("2026-10-28T15:00:00Z", now)).toBe("3h0m");
+    expect(formatCountdown("2026-10-30T12:20:00Z", now)).toBe("2d0h");
+    expect(formatCountdown("2026-10-28T12:00:30Z", now)).toBe("0m");
+  });
+
+  it("has nothing to say once the time has passed, or when there's none", () => {
+    expect(formatCountdown("2026-10-28T11:59:00Z", now)).toBeNull();
+    expect(formatCountdown(null, now)).toBeNull();
+    expect(formatCountdown("not a date", now)).toBeNull();
+  });
+});
+
+describe("egressText", () => {
+  const now = Date.parse("2026-10-28T12:00:00Z");
+  const egress = (checkedAt: string | null, ip: string | null = "203.0.113.7", error: string | null = null) => ({ ip, country: "US", checkedAt, error });
+
+  it("gives the address Anthropic sees and its country", () => {
+    expect(egressText(egress("2026-10-28T11:55:00Z"), now)).toBe("IP: 203.0.113.7 (US)");
+    expect(egressText({ ...egress("2026-10-28T11:55:00Z"), country: null }, now)).toBe("IP: 203.0.113.7");
+  });
+
+  it("says how old the address is once it's been an hour, as when checks fail since", () => {
+    expect(egressText(egress("2026-10-28T11:20:00Z", "203.0.113.7", "timed out"), now)).toBe("IP: 203.0.113.7 (US)");
+    expect(egressText(egress("2026-10-28T10:50:00Z", "203.0.113.7", "timed out"), now)).toBe("IP: 203.0.113.7 (US, 1h ago)");
+  });
+
+  it("says it couldn't check when it never could, and nothing before the first check", () => {
+    expect(egressText(egress(null, null, "Client network socket disconnected"), now)).toBe("IP: couldn't check");
+    expect(egressText(null, now)).toBeNull();
+  });
+});
+
+describe("shortWindowLabel", () => {
+  it("shortens the window names Claude and Codex readings use", () => {
+    expect(shortWindowLabel("5-hour")).toBe("5h");
+    expect(shortWindowLabel("Weekly")).toBe("7d");
+    expect(shortWindowLabel("3-day")).toBe("3d");
+    expect(shortWindowLabel("90-minute")).toBe("90m");
+    expect(shortWindowLabel("Usage")).toBe("Usage");
   });
 });
 
@@ -198,6 +279,33 @@ describe("account state for the app", () => {
     // Older servers only said so through the status.
     expect(isDisabled({ ...base, status: "disabled", disabled: false })).toBe(true);
   });
+
+  it("only lets ready subscription accounts take work over, as the server does", () => {
+    const ready = { ...base, family: "claude" as const, azure: null, bedrock: null, api: null };
+    expect(canStandIn(ready)).toBe(true);
+    expect(canStandIn({ ...ready, auth: "api" })).toBe(false);
+    // With paid API fallback, a marked paid stand-in (Azure, Bedrock) or a Claude key on Anthropic's own
+    // API, as the server's isPaidStandIn: another API key is used only when picked.
+    const bedrock = { ...ready, auth: "api" as const, bedrock: {} as NonNullable<AccountView["bedrock"]> };
+    const azure = { ...ready, family: "codex" as const, auth: "api" as const, azure: {} as NonNullable<AccountView["azure"]> };
+    expect(canStandIn(bedrock)).toBe(false);
+    expect(canStandIn(bedrock, true)).toBe(true);
+    expect(canStandIn(azure, true)).toBe(true);
+    expect(canStandIn({ ...ready, auth: "api" }, true)).toBe(false);
+    const key = (baseUrl: string | null) => ({ ...ready, auth: "api" as const, api: { keyKind: "api_key" as const, keyHint: "abcd", baseUrl, disableTelemetry: false, disableErrorReporting: false, disableNonessentialTraffic: false } });
+    expect(canStandIn(key(null))).toBe(false);
+    expect(canStandIn(key(null), true)).toBe(true);
+    expect(canStandIn(key("https://api.anthropic.com"), true)).toBe(true);
+    expect(canStandIn(key("https://gw.example.com"), true)).toBe(false);
+    // A ChatGPT key that isn't Azure's never stands in.
+    expect(paidStandIn({ ...key(null), family: "codex" })).toBe(false);
+    expect(paidStandIn({ family: "claude", auth: "subscription", azure: null, bedrock: null, api: null })).toBe(false);
+    expect(canStandIn({ ...ready, status: "limited" })).toBe(false);
+    expect(canStandIn({ ...ready, status: "disabled" })).toBe(false);
+    expect(canStandIn({ ...ready, status: "signed_out" })).toBe(false);
+    // Pi's own login may be an API key too.
+    expect(canStandIn({ ...ready, family: "pi" })).toBe(false);
+  });
 });
 
 describe("formatExtraUsage", () => {
@@ -253,5 +361,27 @@ describe("paceVerdict", () => {
     expect(paceVerdict(busy, true)).toBe("Picks next");
     expect(paceVerdict(busy, false)).toBe("Held back: busy hour");
     expect(paceVerdict({ ...busy, gated: false }, false)).toBe("Week nearly used");
+  });
+});
+
+describe("reportsUsage", () => {
+  it("is a Claude or ChatGPT subscription account's, whose provider sends 5-hour and weekly windows", () => {
+    for (const family of ["claude", "codex"] as const) {
+      expect(reportsUsage({ family, auth: "subscription" })).toBe(true);
+      expect(reportsUsage({ family, auth: "api" })).toBe(false);
+    }
+    // Grok and Cursor never send windows, and Pi's CLI reports none.
+    for (const family of ["grok", "cursor", "pi"] as const) expect(reportsUsage({ family, auth: "subscription" })).toBe(false);
+  });
+});
+
+describe("onAnthropicApi", () => {
+  it("is a Claude key's base URL left empty or set to Anthropic's own API, and nothing else", () => {
+    for (const url of [null, undefined, "", "  ", "https://api.anthropic.com", "https://api.anthropic.com/", "HTTPS://API.ANTHROPIC.COM"]) {
+      expect(onAnthropicApi(url), String(url)).toBe(true);
+    }
+    for (const url of ["https://gw.example.com", "http://api.anthropic.com", "https://api.anthropic.com.example.com", "https://api.anthropic.com/v2"]) {
+      expect(onAnthropicApi(url), url).toBe(false);
+    }
   });
 });

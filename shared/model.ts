@@ -274,6 +274,19 @@ export const TrafficSwitchesSchema = z.object({
 });
 export type TrafficSwitches = z.infer<typeof TrafficSwitchesSchema>;
 
+/** Anthropic's own API, where a Claude API key goes when its base URL is left empty. */
+export const ANTHROPIC_API = "https://api.anthropic.com";
+
+/**
+ * Whether a Claude API key with this base URL goes to Anthropic's own API: no base URL, or
+ * Anthropic's typed out. Only such a key stands in with "Use paid API accounts when every
+ * subscription is out" (see `isPaidStandIn`); one on another endpoint is used only when chosen.
+ */
+export function onAnthropicApi(baseUrl: string | null | undefined): boolean {
+  const url = baseUrl?.trim().replace(/\/+$/, "").toLowerCase();
+  return !url || url === ANTHROPIC_API;
+}
+
 /** An API key's settings as shown in the app; the key itself never leaves the host. */
 export const ApiSummarySchema = TrafficSwitchesSchema.extend({
   /** Left out by providers whose accounts only take an API key (Pi's). */
@@ -445,6 +458,8 @@ export type AccountStatus = z.infer<typeof AccountStatusSchema>;
 
 /** An account projected to this share of its 5-hour window, or already there, is held back when spreading. */
 export const PACE_GATE_PERCENT = 80;
+/** Weekly use at which an account counts as nearly used up; pacing holds it back. */
+export const WEEK_NEARLY_USED_PERCENT = 90;
 
 /** How pacing reads an account (see `paceScore` in server/routing.ts). Sent only while spreading is on. */
 export const PaceViewSchema = z.object({
@@ -656,6 +671,8 @@ export const StateViewSchema = z.object({
   agentMetadata: z.boolean().optional(),
   /** Paid API accounts (Azure OpenAI, AWS Bedrock) may take work over by themselves once every subscription is out. */
   paidApiFallback: z.boolean().optional(),
+  /** "Keep going after a switch": the follow-up goes out after a switch or a banked reset. */
+  autoContinue: z.boolean().default(true),
   warnings: z.array(z.string()),
 });
 export type StateView = z.infer<typeof StateViewSchema>;

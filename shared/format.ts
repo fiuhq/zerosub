@@ -1,4 +1,4 @@
-import { estimateApiCost, totalTokens, type AccountView, type PaceView, type AgentRoute, type AzureSummary, type Credits, type Egress, type ExtraUsage, type UsageWindow } from "./model";
+import { estimateApiCost, onAnthropicApi, totalTokens, type AccountView, type PaceView, WEEK_NEARLY_USED_PERCENT, type AgentRoute, type AzureSummary, type Credits, type Egress, type ExtraUsage, type UsageWindow } from "./model";
 import type { ReopenSummary } from "./rpc";
 
 /** "in 2h 14m", "in 3d 4h", "now". */
@@ -17,6 +17,51 @@ export function formatResetIn(resetsAt: string | null, now: number = Date.now())
   const days = Math.floor(hours / 24);
   const restHours = hours % 24;
   return restHours === 0 ? `in ${days}d` : `in ${days}d ${restHours}h`;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * When a window resets, in local time: "18:00" today, "Fri 09:00" within the week, "Nov 4 09:00"
+ * a week on. Null once it has passed.
+ */
+export function formatResetAt(resetsAt: string | null, now: number = Date.now()): string | null {
+  if (!resetsAt) return null;
+  const at = Date.parse(resetsAt);
+  if (!Number.isFinite(at) || at <= now) return null;
+  const when = new Date(Math.round(at / 60_000) * 60_000);
+  const time = `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  const today = new Date(now);
+  const days = Math.round(
+    (new Date(when.getFullYear(), when.getMonth(), when.getDate()).getTime() -
+      new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) /
+      86_400_000,
+  );
+  if (days <= 0) return time;
+  if (days < 7) return `${WEEKDAYS[when.getDay()]} ${time}`;
+  return `${MONTHS[when.getMonth()]} ${when.getDate()} ${time}`;
+}
+
+/**
+ * How long until a window resets, as Claude Code's status line counts it: "3h26m", "17h26m", then
+ * days and hours from a day on, "1d17h", and minutes in the last hour, "26m". Null once it has passed.
+ */
+export function formatCountdown(resetsAt: string | null, now: number = Date.now()): string | null {
+  if (!resetsAt) return null;
+  const at = Date.parse(resetsAt);
+  if (!Number.isFinite(at) || at <= now) return null;
+  const minutes = Math.floor((at - now) / 60_000);
+  const hours = Math.floor(minutes / 60);
+  if (hours >= 24) return `${Math.floor(hours / 24)}d${hours % 24}h`;
+  return hours > 0 ? `${hours}h${minutes % 60}m` : `${minutes}m`;
+}
+
+/** "5h", "7d": a window's name the way a status line writes it (see `windowLabel` in server/codex.ts). */
+export function shortWindowLabel(label: string): string {
+  if (label === "Weekly") return "7d";
+  const span = /^(\d+)-(hour|day|minute)$/.exec(label);
+  return span ? `${span[1]}${span[2]![0]}` : label;
 }
 
 export function formatPercent(value: number): string {
@@ -231,6 +276,36 @@ export function isDisabled(account: Pick<AccountView, "status" | "disabled">): b
   return account.disabled || account.status === "disabled";
 }
 
+/**
+ * The provider reports usage windows (5-hour, weekly) for this account: a Claude or ChatGPT
+ * subscription account's. Not an API account, billed per use, nor a Grok or Cursor account, whose
+ * providers never send windows, nor any Pi account, whose CLI reports none.
+ */
+export function reportsUsage(account: Pick<AccountView, "auth" | "family">): boolean {
+  return account.auth !== "api" && (account.family === "claude" || account.family === "codex");
+}
+
+/**
+ * ZeroSub may carry work on with this account by itself: it's ready, and not billed per use, or with
+ * paid API fallback on a paid stand-in (`paidStandIn`); not a Pi account (Pi's own login may be an
+ * API key too). The app's side of `canStandIn` and `isPaidStandIn` in server/routing.ts, which pick
+ * where forks and switches go: any other API key is used only when picked.
+ */
+export function canStandIn(account: Pick<AccountView, "status" | "auth" | "family" | "azure" | "bedrock" | "api">, paidFallback = false): boolean {
+  return account.status === "ready" && account.family !== "pi" && (account.auth !== "api" || (paidFallback && paidStandIn(account)));
+}
+
+/**
+ * One "Use paid API accounts when every subscription is out" lets stand in, as the server's
+ * `isPaidStandIn` with it on: an Azure OpenAI or AWS Bedrock account, or a Claude account on an API
+ * key or token that goes to Anthropic's own API. A Claude key whose settings couldn't be read counts
+ * as going elsewhere.
+ */
+export function paidStandIn(account: Pick<AccountView, "family" | "auth" | "azure" | "bedrock" | "api">): boolean {
+  if (account.azure || account.bedrock) return true;
+  return account.family === "claude" && account.auth === "api" && account.api !== null && onAnthropicApi(account.api.baseUrl);
+}
+
 /** The note over state the daemon stopped answering for: "Showing data from 3m ago · couldn't refresh: …". */
 export function staleNotice(updatedAt: number | null, error: string, now: number = Date.now()): string {
   if (updatedAt === null) return `Couldn't refresh: ${error}`;
@@ -267,14 +342,11 @@ export function apiUsageLines(account: Pick<AzureSummary, "prices" | "usage">, n
   return { tokens, cost, note };
 }
 
-/** Weekly use at which an account counts as nearly used up. */
-const WEEK_NEARLY_USED = 90;
-
 /** What pacing makes of an account, in a few words for a menu row. `next`: pacing picks it for the next new agent. */
 export function paceVerdict(pace: PaceView, next: boolean): string {
   if (next) return "Picks next";
   if (pace.gated) return "Held back: busy hour";
-  if (pace.weeklyUsed !== null && pace.weeklyUsed >= WEEK_NEARLY_USED) return "Week nearly used";
+  if (pace.weeklyUsed !== null && pace.weeklyUsed >= WEEK_NEARLY_USED_PERCENT) return "Week nearly used";
   // The same standing as the account card's `describePace`.
   if (pace.weeklyUsed !== null && pace.weekElapsed !== null && Math.round(pace.weeklyUsed + pace.pendingWeekly) > Math.round(pace.weekElapsed)) {
     return "Using week fast";

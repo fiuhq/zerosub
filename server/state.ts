@@ -61,6 +61,13 @@ export const BindingSchema = z.object({
   source: z.enum(["user", "auto", "balance", "thread"]),
   at: z.string(),
   selectionReason: z.enum(["weekly_reset", "headroom"]).optional(),
+  /**
+   * ZeroSub bound the agent to a paid stand-in by itself (a fork while every subscription was out, or
+   * kept there when the default changed), so it isn't the agent's own route: routing lets go of it once
+   * a subscription account can take the agent, even after `paidApiFallback` is turned off and a Claude
+   * key no longer counts as a stand-in (see `chooseAccount` and `Service.leavesPaid`).
+   */
+  standIn: z.literal(true).optional(),
 });
 export type Binding = z.infer<typeof BindingSchema>;
 
@@ -70,6 +77,12 @@ export const LiveSessionSchema = z.object({
   openedAt: z.string(),
   /** The Paseo project the agent's workspace belongs to, when known. */
   projectId: z.string().nullable().optional(),
+  /**
+   * Opened on a paid stand-in only because every subscription account was out (`paidApiFallback`),
+   * not because the agent routes there. Kept with the session, so the agent still leaves it once a
+   * subscription account has room after the setting is turned off (see `Service.leavesPaid`).
+   */
+  standIn: z.literal(true).optional(),
 });
 export type LiveSession = z.infer<typeof LiveSessionSchema>;
 
