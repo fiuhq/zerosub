@@ -18,7 +18,18 @@ import {
 import { bedrockEnv, bedrockIdentity, isBedrockHome, readBedrockAccount } from "./bedrock";
 import { browserCaptureScript, providerCommand } from "./binaries";
 import { CLAUDE_RESET_PROGRAM, describeResetBlock, parseClaudeResets, readClaimReply } from "./claude-resets";
-import { claudeClearTextProxy, claudeHomeHoldsAccount, prepareClaudeHome, readAccountApi, readAccountProxy, writeAccountApi, writeAccountProxy, type ApiConfig } from "./homes";
+import {
+  claudeClearTextProxy,
+  claudeHomeHoldsAccount,
+  claudeSessionsShared,
+  prepareClaudeHome,
+  readAccountApi,
+  readAccountProxy,
+  shareClaudeSessions,
+  writeAccountApi,
+  writeAccountProxy,
+  type ApiConfig,
+} from "./homes";
 import { readJson } from "./json-file";
 import { detectClaudeLimit, detectClaudeSignOut } from "./limits";
 import { inheritedClaudeProxy, mainProxyBlock, mainProxyEnv, mainSettingsEnv, readMainProxy, writeMainProxy } from "./main-proxy";
@@ -105,6 +116,14 @@ export class ClaudeAdapter implements FamilyAdapter {
 
   prepareHome(home: string, wanted?: () => Promise<boolean>): Promise<void> {
     return prepareClaudeHome(home, false, wanted);
+  }
+
+  sessionsShared(home: string): Promise<boolean> {
+    return claudeSessionsShared(home);
+  }
+
+  shareSessions(home: string, share: boolean, wanted?: () => Promise<boolean>): Promise<void> {
+    return shareClaudeSessions(home, share, wanted);
   }
 
   async proxyState(home: string | null): Promise<ProxyState> {
@@ -394,6 +413,18 @@ export class ClaudeAdapter implements FamilyAdapter {
     return claudeHomeHoldsAccount(home);
   }
 
+  /**
+   * Why `home`'s folder stays where it is: on macOS its Keychain entry moves with it (see
+   * `copyCredentials`), and one too long to write through `security -i` can't. Claude Code's
+   * `mcpOAuth` records alone can make it that long. Null when it can move.
+   */
+  async homeStays(home: string): Promise<string | null> {
+    if (process.platform !== "darwin") return null; // Elsewhere the login lives in the home itself.
+    const secret = await readKeychainEntry(home);
+    // Every added home's entry is named alike, so it's as long written for the folder it would move to.
+    return secret !== null && addEntryCommand(home, secret) === null ? KEYCHAIN_TOO_LONG : null;
+  }
+
   async copyCredentials(from: string, to: string): Promise<void> {
     if (process.platform !== "darwin") return; // Elsewhere the login lives in the home itself.
     const secret = await readKeychainEntry(from);
@@ -656,14 +687,26 @@ async function readKeychainEntry(home: string): Promise<string | null> {
 /** Longest command `security -i` takes on one line. */
 const SECURITY_LINE_MAX = 4_000;
 
+/** Why a home whose Keychain entry is too long to copy stays where it is (see `ClaudeAdapter.homeStays`). */
+const KEYCHAIN_TOO_LONG = "its Keychain sign-in is too long to copy without showing it in the process list";
+
+/**
+ * The `security -i` command that writes `secret` as the home's Keychain entry, or null when it's
+ * longer than one line of `security -i`: the rest would run as another command.
+ */
+function addEntryCommand(home: string, secret: string): string | null {
+  const line = `add-generic-password -U -a "${keychainAccount()}" -s "${keychainService(home)}" -X "${Buffer.from(secret, "utf8").toString("hex")}"\n`;
+  return line.length > SECURITY_LINE_MAX ? null : line;
+}
+
 /**
  * Writes the home's Keychain entry the way Claude Code does: through `security -i`'s standard
  * input, so the secret never shows in the process list.
  */
 async function writeKeychainEntry(home: string, secret: string): Promise<void> {
   const service = keychainService(home);
-  const line = `add-generic-password -U -a "${keychainAccount()}" -s "${service}" -X "${Buffer.from(secret, "utf8").toString("hex")}"\n`;
-  if (line.length > SECURITY_LINE_MAX) throw new Error(`the sign-in is too long to write to the Keychain entry "${service}" without showing it in the process list`);
+  const line = addEntryCommand(home, secret);
+  if (line === null) throw new Error(`the sign-in is too long to write to the Keychain entry "${service}" without showing it in the process list`);
   const result = await run("/usr/bin/security", ["-i"], { input: line, timeoutMs: 10_000 });
   if (result.code !== 0) throw new Error(`couldn't write the Keychain entry "${service}" (${keychainFailure(result)})`);
 }

@@ -13,6 +13,7 @@ import {
   renameAccount,
   setAccountEnabled,
   setAccountProjects,
+  setAccountSessionsShared,
   setDefaultAccount,
   setNextAgentAccount,
   type ProjectOption,
@@ -21,13 +22,14 @@ import { AddAccountModal } from "./add-account";
 import { ApiAccountModal } from "./api-account";
 import { AzureAccountModal, AzureUsage, azureCardDetails } from "./azure-account";
 import { BedrockAccountModal, BedrockUsage, bedrockCardDetails } from "./bedrock-account";
+import { ComposerPillRows } from "./composer-settings";
 import { ForkDestinationRows, OpenCodeForkRows } from "./fork-settings";
 import { AddPiAccountModal, ApiKeyModal, HomesHint, PiSectionNotes, ProxyModal, ShellHint, piCardDetails } from "./pi-accounts";
 import { PaceSection } from "./pace";
 import { ResetConfirm, redeemToast, resetBadge } from "./reset-confirm";
 import { describe, stoppedWaiting, useStore, VISIBLE_POLL_MS, type ZeroSubStore } from "./store";
 import { Badge, Button, Card, IconButton, UsageBar, useText, type TooltipAlign } from "./ui";
-import { cardActions, splitCardActions, claudeCardDetails, removeText, type CardActionKey } from "./card-actions";
+import { cardActions, splitCardActions, claudeCardDetails, offersSignOut, removeText, type CardActionKey } from "./card-actions";
 import { UpNext, useUpNextLines } from "./up-next";
 
 type Theme = PluginSurfaceProps["theme"];
@@ -350,7 +352,7 @@ function AccountCard({
 }) {
   const text = useText(theme);
   const toast = useToast();
-  const [busy, setBusy] = useState<"default" | "remove" | "clear" | "toggle" | "usage" | "next" | null>(null);
+  const [busy, setBusy] = useState<"default" | "remove" | "clear" | "toggle" | "usage" | "next" | "sessions" | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [choosingProjects, setChoosingProjects] = useState(false);
   const [editingApi, setEditingApi] = useState(false);
@@ -368,6 +370,10 @@ function AccountCard({
   const [confirmRemove, setConfirmRemove] = useState(false);
   // A wide card's buttons past the first few, shown under the name (see `splitCardActions`).
   const [moreActions, setMoreActions] = useState(false);
+  // Moving the sessions folder copies and renames files, so the card's button asks first.
+  const [confirmSessions, setConfirmSessions] = useState(false);
+  // Asked in the Remove dialog of an account whose folder stays; off each time it opens.
+  const [signOut, setSignOut] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const resets = account.usage?.resets ?? null;
   const credits = account.usage?.credits ?? null;
@@ -442,6 +448,22 @@ function AccountCard({
     }
   }, [account.id, store]);
 
+  // Shares the account's sessions folder with the CLI's own, or gives it its own again.
+  const shareSessions = useCallback(async () => {
+    const share = !account.sessionsShared;
+    setBusy("sessions");
+    try {
+      await store.rpc(setAccountSessionsShared, { accountId: account.id, shared: share });
+      toast.show(share ? `${account.label} now uses the default sessions folder` : `${account.label} now uses its own sessions folder`, { variant: "success" });
+      await store.refresh();
+    } catch (error) {
+      toast.error(describe(error));
+    } finally {
+      setBusy(null);
+      setConfirmSessions(false);
+    }
+  }, [account, store, toast]);
+
   // For when the user knows better, e.g. after upgrading the plan or buying credits.
   const markAvailable = useCallback(async () => {
     setBusy("clear");
@@ -458,8 +480,13 @@ function AccountCard({
   const remove = useCallback(async () => {
     setBusy("remove");
     try {
-      const result = await store.rpc(removeAccount, { accountId: account.id });
-      const removed = account.externalHome ? `Removed ${account.label} from ZeroSub; its sign-in and files are kept` : `Removed ${account.label}`;
+      const signingOut = signOut && offersSignOut(account);
+      const result = await store.rpc(removeAccount, { accountId: account.id, ...(signingOut ? { signOut: true } : {}) });
+      const removed = !account.externalHome
+        ? `Removed ${account.label}`
+        : signingOut
+          ? `Removed ${account.label} from ZeroSub; it's signed out once no agent runs on it, and its files are kept`
+          : `Removed ${account.label} from ZeroSub; its sign-in and files are kept`;
       // An older server only says how many agents ran on it, not how moving them went.
       const message = result.moves
         ? describeReopen(removed, result.moves)
@@ -482,7 +509,7 @@ function AccountCard({
       setBusy(null);
       setConfirmRemove(false);
     }
-  }, [account, store, toast]);
+  }, [account, signOut, store, toast]);
 
   const offered: Record<CardActionKey, CardAction> = {
     clear: {
@@ -556,6 +583,16 @@ function AccountCard({
       tooltip: "Projects: pick the Paseo projects whose agents use this account",
       onPress: () => setChoosingProjects(true),
     },
+    sessions: {
+      key: "sessions",
+      icon: account.sessionsShared ? "Unlink" : "Link",
+      label: account.sessionsShared ? "Use its own sessions folder" : "Use the default sessions folder",
+      tooltip: account.sessionsShared
+        ? "Uses the default sessions folder (~/.claude/sessions). Asks before giving this account a folder of its own again"
+        : "Uses a sessions folder of its own. Asks before switching it to the default one (~/.claude/sessions)",
+      busy: busy === "sessions",
+      onPress: () => setConfirmSessions(true),
+    },
     rename: { key: "rename", icon: "Pencil", label: "Rename", tooltip: "Rename this account", onPress: () => setRenaming(true) },
     remove: {
       key: "remove",
@@ -566,7 +603,10 @@ function AccountCard({
           : "Remove: sign it out and delete its saved login",
       tone: "danger",
       busy: busy === "remove",
-      onPress: () => setConfirmRemove(true),
+      onPress: () => {
+        setSignOut(false);
+        setConfirmRemove(true);
+      },
     },
   };
   const keys = cardActions(account);
@@ -584,10 +624,11 @@ function AccountCard({
       onPress={action.onPress}
     />
   );
-  // On a phone the buttons go on a row under the name, which leaves the name its room: up to eight 30 pt
+  // On a phone the buttons go on a row under the name, which leaves the name its room: up to nine 30 pt
   // buttons beside it would leave a 375 pt phone's card none. That row is 261 pt wide there (eight take
-  // 254) and starts 75 pt from the screen's left, so a 240 pt tip opens rightwards from the first two,
-  // centred over the next three and leftwards from the rest, and stays on screen.
+  // 254, a ninth wraps) and starts 75 pt from the screen's left, so a 240 pt tip opens rightwards from
+  // the first two, centred over the next three and leftwards from the rest, and stays on screen; a
+  // wrapped one counts from its row's start.
   const rowAlign = (index: number): TooltipAlign => (index % 8 < 2 ? "start" : index % 8 < 5 ? "center" : "end");
   const actionRow = compact ? (
     <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 2, marginLeft: -6 }}>
@@ -672,7 +713,9 @@ function AccountCard({
         <Text style={[account.moving.error ? text.danger : text.small, faded]}>
           {account.moving.error
             ? `Couldn't move its folder to ${account.moving.to}: ${account.moving.error}`
-            : `Moving its folder to ${account.moving.to}${account.moving.waiting ? `: ${account.moving.waiting}` : "…"}`}
+            : account.moving.stays
+              ? `Its folder stays where it is instead of moving to ${account.moving.to}: ${account.moving.stays}`
+              : `Moving its folder to ${account.moving.to}${account.moving.waiting ? `: ${account.moving.waiting}` : "…"}`}
         </Text>
       ) : null}
 
@@ -824,11 +867,48 @@ function AccountCard({
       ) : null}
       {editingProxy ? <ProxyModal theme={theme} store={store} account={account} onClose={() => setEditingProxy(false)} /> : null}
       {choosingProjects ? <ProjectsModal theme={theme} account={account} store={store} onClose={() => setChoosingProjects(false)} /> : null}
+      <Modal
+        title={account.sessionsShared ? `Give ${account.label} its own sessions folder?` : `Use the default sessions folder for ${account.label}?`}
+        open={confirmSessions}
+        onOpenChange={setConfirmSessions}
+      >
+        <Modal.Content>
+          <Text style={text.body}>
+            {account.sessionsShared
+              ? `${account.label} gets an empty sessions folder of its own, and its sessions and the ones in ~/.claude/sessions stop seeing each other. What it registered in ~/.claude/sessions stays there.`
+              : `${account.label}'s sessions folder becomes Claude Code's default, ~/.claude/sessions, so its running sessions and those of the CLI and every account using that folder see each other. What its own folder holds is copied there first, without overwriting anything, and the folder is kept beside it as sessions.bak-<time>.`}
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
+            <Button theme={theme} label="Cancel" tooltip="Leave the sessions folder as it is" tooltipAlign="end" onPress={() => setConfirmSessions(false)} />
+            <Button
+              theme={theme}
+              tone="primary"
+              icon={account.sessionsShared ? "Unlink" : "Link"}
+              label={account.sessionsShared ? "Use its own folder" : "Use the default folder"}
+              tooltip={account.sessionsShared ? "Give this account an empty sessions folder of its own" : "Switch this account to ~/.claude/sessions"}
+              tooltipAlign="end"
+              busy={busy === "sessions"}
+              onPress={() => void shareSessions()}
+            />
+          </View>
+        </Modal.Content>
+      </Modal>
       <Modal title={`Remove ${account.label}?`} open={confirmRemove} onOpenChange={setConfirmRemove}>
         <Modal.Content>
           <Text style={text.body}>
-            {removeText(account).body}
+            {removeText(account, signOut).body}
           </Text>
+          {offersSignOut(account) ? (
+            <SettingsCard>
+              <SettingsSwitch
+                label="Also sign it out"
+                hint="Off, it stays signed in, so its terminal script still works and it can be added back. On, it's signed out on this machine once no agent runs on it. Its folder stays either way."
+                value={signOut}
+                disabled={busy === "remove"}
+                onValueChange={setSignOut}
+              />
+            </SettingsCard>
+          ) : null}
           <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
             <Button theme={theme} label="Cancel" tooltip="Keep this account" tooltipAlign="end" onPress={() => setConfirmRemove(false)} />
             <Button
@@ -836,7 +916,7 @@ function AccountCard({
               tone="danger"
               icon="Trash2"
               label="Remove"
-              tooltip={removeText(account).tooltip}
+              tooltip={removeText(account, signOut).tooltip}
               tooltipAlign="end"
               busy={busy === "remove"}
               onPress={() => void remove()}
@@ -1132,6 +1212,14 @@ function AutomationSettings({ theme, compact }: { theme: Theme; compact: boolean
             disabled={settings.saving || !settings.values.autoSwitch}
             onValueChange={(codexSameConversation) => save({ codexSameConversation })}
           />
+        </SettingsCard>
+      </View>
+      <View style={{ gap: 10 }}>
+        <Text style={text.heading} accessibilityRole="header">
+          Composer
+        </Text>
+        <SettingsCard>
+          <ComposerPillRows values={settings.values} saving={settings.saving} onSave={save} />
         </SettingsCard>
       </View>
       <View style={{ gap: 10 }}>

@@ -224,6 +224,7 @@ async function setUp(model: string, siblingModels: string[] = [], options: { rea
       },
     } as unknown as Reopener,
   );
+  service.signOutRecheckMs = 0;
   service.setPreferences(preferences.schema.parse({}));
   const turn = () =>
     service.onTurnEnded(

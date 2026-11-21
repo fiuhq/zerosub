@@ -248,6 +248,7 @@ describe("the accounts screen", () => {
       home: null,
     projects: [],
       externalHome: false,
+      sessionsShared: null,
       proxy: null,
       proxyEditable: false,
       inheritedProxy: null,
@@ -278,6 +279,7 @@ describe("the accounts screen", () => {
       piLaunchers: null,
       piHomes: null,
       showComposerPill: true,
+      keepComposerPill: true,
       openCodeAvailable: false,
       autoSwitch: true,
       autoContinue: true,
@@ -474,14 +476,24 @@ describe("the accounts screen", () => {
     });
 
     it("says on a card where its folder is moving and what it waits for, or why it couldn't", () => {
-      const waiting = { to: "~/.claude-config", waiting: "Claude Code runs on it (an agent or a terminal); it moves once that stops", error: null };
-      const failed = { to: "~/.claude-config/claude-home", waiting: null, error: "the Keychain entry is locked" };
+      const waiting = { to: "~/.claude-config", waiting: "Claude Code runs on it (an agent or a terminal); it moves once that stops", error: null, stays: null };
+      const failed = { to: "~/.claude-config/claude-home", waiting: null, error: "the Keychain entry is locked", stays: null };
       expect(textOf(setUp({ accounts: [account("home", { moving: waiting })] }).card("home")())).toContain(
         "Moving its folder to ~/.claude-config: Claude Code runs on it (an agent or a terminal); it moves once that stops",
       );
       expect(textOf(setUp({ accounts: [account("home", { moving: failed })] }).card("home")())).toContain(
         "Couldn't move its folder to ~/.claude-config/claude-home: the Keychain entry is locked",
       );
+    });
+
+    it("says on a card why its folder stays where it is, which isn't an error", () => {
+      const stays = { to: "~/.claude-config", waiting: null, error: null, stays: "its Keychain sign-in is too long to copy without showing it in the process list" };
+      const shown = textOf(setUp({ accounts: [account("home", { moving: stays })] }).card("home")());
+      expect(shown).toContain(
+        "Its folder stays where it is instead of moving to ~/.claude-config: its Keychain sign-in is too long to copy without showing it in the process list",
+      );
+      expect(shown).not.toContain("Couldn't move");
+      expect(shown).not.toContain("Moving its folder");
     });
   });
 
@@ -511,6 +523,49 @@ describe("the accounts screen", () => {
     expect(opened).toEqual(expect.arrayContaining(["Proxy", "Rename", "Remove"]));
     (find(render(), named("IconButton", "Fewer actions")).props.onPress as () => void)();
     expect(labels(render())).toEqual(closed);
+  });
+
+  it("shares an added Claude account's sessions from its card, or gives it its own again, once confirmed", async () => {
+    const { card, store } = setUp({
+      accounts: [account("work", { isDefault: true }), account("home", { sessionsShared: false }), account("shared", { sessionsShared: true })],
+    });
+    store.rpc.mockResolvedValue({ ok: true, shared: true });
+    const button = cardButton;
+    const confirm = (render: () => Element, label: string) => find(render(), (element) => element.type === "Button" && element.props.label === label);
+    const home = card("home");
+    // The card's button only asks.
+    (button(home, "Use the default sessions folder")!.props.onPress as () => void)();
+    expect(store.rpc).not.toHaveBeenCalled();
+    await (confirm(home, "Use the default folder").props.onPress as () => Promise<void>)();
+    expect(store.rpc).toHaveBeenLastCalledWith(expect.anything(), { accountId: "home", shared: true });
+    const shared = card("shared");
+    (button(shared, "Use its own sessions folder")!.props.onPress as () => void)();
+    await (confirm(shared, "Use its own folder").props.onPress as () => Promise<void>)();
+    expect(store.rpc).toHaveBeenLastCalledWith(expect.anything(), { accountId: "shared", shared: false });
+    // Where the server doesn't offer it (the CLI login, another provider, an older server), there's none.
+    expect(button(card("work"), "Use the default sessions folder")).toBeUndefined();
+  });
+
+  it("asks whether to sign out an account whose folder stays, off each time the dialog opens", async () => {
+    const { card, store } = setUp({ accounts: [account("work", { isDefault: true }), account("home", { externalHome: true }), account("own")] });
+    store.rpc.mockResolvedValue({ ok: true, movedAgents: 0 });
+    const signOutSwitch = (render: () => Element) => [...elements(render())].find((element) => element.type === "SettingsSwitch" && element.props.label === "Also sign it out");
+    const removeButton = (render: () => Element) => find(render(), (element) => element.type === "Button" && element.props.label === "Remove");
+    const render = card("home");
+    (cardButton(render, "Remove")!.props.onPress as () => void)();
+    expect(signOutSwitch(render)!.props.value).toBe(false);
+    (signOutSwitch(render)!.props.onValueChange as (value: boolean) => void)(true);
+    expect(removeButton(render).props.tooltip).toContain("sign it out");
+    await (removeButton(render).props.onPress as () => Promise<void>)();
+    expect(store.rpc).toHaveBeenLastCalledWith(expect.anything(), { accountId: "home", signOut: true });
+    // Opened again, it starts off.
+    (cardButton(render, "Remove")!.props.onPress as () => void)();
+    expect(signOutSwitch(render)!.props.value).toBe(false);
+    // A folder ZeroSub deletes is always signed out: nothing to ask.
+    const own = card("own");
+    expect(signOutSwitch(own)).toBeUndefined();
+    await (removeButton(own).props.onPress as () => Promise<void>)();
+    expect(store.rpc).toHaveBeenLastCalledWith(expect.anything(), { accountId: "own" });
   });
 
   it("says a removal Paseo stopped waiting for goes on, rather than that it failed", async () => {
