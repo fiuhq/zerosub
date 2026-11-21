@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { lstat, readdir, readFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type {
   PluginBeforeRequests,
   PluginHookContext,
@@ -95,7 +95,7 @@ import { Mutex } from "./json-file";
 import { detectAzureLimit, detectAzureSignOut, detectBedrockAutoModeRefusal, detectBedrockLimit, detectBedrockModelUnavailable, detectBedrockRefusal, turnRows } from "./limits";
 import { canSignInWithBrowser } from "./machine";
 import { equivalentMode, withinMode } from "./modes";
-import { homesDir, inHomesDir, isOwnHome, shownPath } from "./paths";
+import { homesDir, inHomesDir, isOwnHome, reachesCliHome, shownPath } from "./paths";
 import { chooseHomesDir, chooseImportedHome, chooseImportedPiHome, homesDirFor, PLACED, placeFor, type PlacedFamily } from "./placement";
 import { maskProxy, normalizeProxy } from "./proxy";
 import { Reopener, hostCanReload } from "./reopen";
@@ -137,6 +137,12 @@ const RENEW_LOGIN_MS = 30 * 60_000;
 const ACTIVE_WINDOW_MS = 15 * 60_000;
 const UPKEEP_MS = 30_000;
 const IDENTITY_MS = 30 * 60_000;
+/**
+ * How long to wait before reading a sign-in again when a signed-in account reads as signed out. Every
+ * process on the account's home shares its token, and one reading taken while another process renews
+ * it can say signed out for a moment; a sign-out stands only when a second reading says so too.
+ */
+const SIGN_OUT_RECHECK_MS = 10_000;
 const AVAILABILITY_MS = 10 * 60_000;
 /** Assumed length of a window limit whose reset time couldn't be read. */
 const WINDOW_LIMIT_MS = 60 * 60_000;
@@ -193,6 +199,8 @@ const USAGE_REPLY_MS = 15_000;
 const EGRESS_MS = 30 * 60_000;
 /** A home an agent was routed to this recently isn't moved yet: its session may only now be starting. */
 const ROUTED_SETTLE_MS = 30_000;
+/** A home that has to stay where it is (see `FamilyAdapter.homeStays`) is asked about again after this long. */
+const HOME_STAYS_MS = 30 * 60_000;
 const USAGE_HISTORY_SIZE = 12;
 
 const DEFAULT_PREFERENCES: Preferences = {
@@ -204,6 +212,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   switchEarlyWeeklyAt: 95,
   balanceNewAgents: true,
   showComposerPill: true,
+  keepComposerPill: true,
   autoRedeem: false,
   useCredits: false,
   forkOtherProvider: false,
@@ -556,6 +565,8 @@ export class Service {
   private readonly routedAt = new Map<string, number>();
   /** Why each account whose home is due to move hasn't moved yet: what it waits for, or what went wrong. */
   private readonly moveNotes = new Map<string, { waiting: string | null; error: string | null }>();
+  /** Accounts whose home has to stay where it is: which home, why, and when that was asked (see `whyStays`). */
+  private readonly staying = new Map<string, { home: string; why: string; at: number }>();
   /** Each account's script, as the launchers were last written. */
   private launcherFiles: Map<string, string> | null = null;
   /** OpenCode fork handoffs in flight, by source agent; duplicate requests join the first call. */
@@ -621,6 +632,9 @@ export class Service {
     this.adapters = Object.fromEntries(FAMILIES.map((family) => [family, adapters[family] ?? missingAdapter(family)])) as Record<Family, FamilyAdapter>;
     this.continuations = new CodexContinuations(store);
   }
+
+  /** Tests shorten it; see `SIGN_OUT_RECHECK_MS`. */
+  signOutRecheckMs = SIGN_OUT_RECHECK_MS;
 
   setPreferences(prefs: Preferences): void {
     const routingChanged = prefs.autoSwitch !== this.prefs.autoSwitch || prefs.paidApiFallback !== this.prefs.paidApiFallback;
@@ -762,10 +776,17 @@ export class Service {
     // A Pi API account's key is only known to work from a turn: a refused one is learned from a failed turn.
     if (!account || account.auth === "api") return;
     // A check that can't tell (Claude's keychain unreadable just now, say) changes nothing; the next one may.
-    const identity = await this.adapters[account.family].identity(account.home, { livePlan: livePlan && account.family === "claude" }).catch((error: unknown) => {
-      log(`could not check whether ${account.label} is signed in`, error);
-      return null;
-    });
+    const read = () =>
+      this.adapters[account.family].identity(account.home, { livePlan: livePlan && account.family === "claude" }).catch((error: unknown) => {
+        log(`could not check whether ${account.label} is signed in`, error);
+        return null;
+      });
+    let identity = await read();
+    if (identity && !identity.signedIn && account.signedIn) {
+      // One reading taken while another process renews the token can say signed out (see `SIGN_OUT_RECHECK_MS`).
+      await delay(this.signOutRecheckMs);
+      identity = await read();
+    }
     if (!identity) return;
     let handedOver = false;
     await this.store.update((draft) => {
@@ -880,7 +901,9 @@ export class Service {
     for (const home of this.creatingHomes) busy.add(home);
     for (const [home, entry] of Object.entries(state.cleanup)) {
       if (busy.has(home)) continue;
-      if (!isAccountHome(home, entry.family)) {
+      // A removed account's folder of the user's is only signed out, and never a CLI's own login.
+      const signOutOnly = entry.signOutOnly === true && entry.why === "removed" && isAbsolute(home) && !(await reachesCliHome(home));
+      if (!signOutOnly && !isAccountHome(home, entry.family)) {
         // Only a folder ZeroSub made in homes/ is ever signed out or deleted. An entry naming anything
         // else (a hand edit, say) could otherwise sign out the CLI's own login, keychain entry and all.
         await this.store.update((draft) => {
@@ -924,7 +947,9 @@ export class Service {
       (entry.family === "claude" && isBedrockHome(home)) ||
       (await this.adapters[entry.family].api?.(home).catch(() => null)) != null;
     const earlier = entry.why === "unfinished" && !apiHome && !this.endedHere(home);
-    let deleteFolder = true;
+    // The user's folder stays (see `remove`); only its sign-in goes.
+    const keep = entry.signOutOnly === true;
+    let deleteFolder = !keep;
     let outcome: string;
     try {
       if (earlier) {
@@ -935,7 +960,14 @@ export class Service {
           : `deleted ${home}, left by a sign-in that never finished`;
       } else {
         await this.adapters[entry.family].logout(home);
-        outcome = entry.why === "unfinished" && apiHome ? `deleted ${home}, left by an API account that was never saved` : `signed out and deleted ${home}`;
+        // The folder stays, so a sign-out that didn't take would leave the account working: one that
+        // still reads as signed in (or can't be read) fails like a sign-out that threw, and is retried.
+        if (keep && (await this.adapters[entry.family].identity(home)).signedIn) throw new Error(`${home} is still signed in after signing out`);
+        outcome = keep
+          ? `signed out ${home}; its folder is the user's, so it stays`
+          : entry.why === "unfinished" && apiHome
+            ? `deleted ${home}, left by an API account that was never saved`
+            : `signed out and deleted ${home}`;
       }
     } catch (error) {
       const failures = (this.cleanupFailures.get(home) ?? 0) + 1;
@@ -946,7 +978,9 @@ export class Service {
       if (earlier) deleteFolder = false;
       outcome = earlier
         ? `gave up checking whether ${home} is signed in, and left it alone`
-        : `gave up signing out ${home}, so its sign-in may still be valid; deleted it anyway`;
+        : keep
+          ? `gave up signing out ${home}, so its sign-in may still be valid; its folder stays`
+          : `gave up signing out ${home}, so its sign-in may still be valid; deleted it anyway`;
     }
     this.cleanupFailures.delete(home);
     // Checked again just before the folder goes: signing out can take a while too.
@@ -4171,6 +4205,7 @@ export class Service {
     const bedrocks = new Map<string, BedrockSummary>();
     const apiMonths: ApiUsageFile = await this.apiUsage.read().catch(() => ({ accounts: {}, threads: {} }));
     const external = new Set<string>();
+    const sessions = new Map<string, boolean>();
     await Promise.all(
       state.accounts.map(async (account) => {
         const adapter = this.adapters[account.family];
@@ -4182,6 +4217,7 @@ export class Service {
         if (account.kind === "main" && adapter.mainApi && adapter.api) apis.set(account.id, await adapter.api(null).catch(() => null));
         if (account.kind !== "managed" || !account.home) return;
         if (adapter.homesInUse && !(await isOwnHome(account.home))) external.add(account.id);
+        if (adapter.sessionsShared) sessions.set(account.id, await adapter.sessionsShared(account.home).catch(() => false));
         if (account.auth === "api" && adapter.api) apis.set(account.id, await adapter.api(account.home).catch(() => null));
         if (isAzureAccount(account)) {
           // Only the key's hint goes to the app (see azureSummary).
@@ -4205,7 +4241,13 @@ export class Service {
       const move = state.moves[account.id];
       if (!move && !due.has(account.id)) return null;
       const note = this.moveNotes.get(account.id);
-      return { to: shownPath(move?.to ?? homesNow(account.family === "pi" ? "pi" : "claude")), waiting: note?.waiting ?? null, error: note?.error ?? null };
+      const stays = this.staying.get(account.id);
+      return {
+        to: shownPath(move?.to ?? homesNow(account.family === "pi" ? "pi" : "claude")),
+        waiting: note?.waiting ?? null,
+        error: note?.error ?? null,
+        stays: !move && stays?.home === account.home ? stays.why : null,
+      };
     };
     // Pacing only chooses between two or more accounts that can take agents by themselves.
     const pacedFamilies = new Set(
@@ -4246,6 +4288,7 @@ export class Service {
         launcher: launcherOf.get(account.id) ?? null,
         egress: this.egress.get(account.id) ?? null,
         externalHome: external.has(account.id),
+        sessionsShared: sessions.get(account.id) ?? null,
         moving: moving(account),
         pace: this.prefs.balanceNewAgents && pacedFamilies.has(account.family) && canStandIn(account, now)
           ? paceView(this.usage.get(account.id), this.pendingOn(account.id, now), now)
@@ -4264,6 +4307,7 @@ export class Service {
       canReopen,
       browserSignIn: this.browserSignIn,
       showComposerPill: this.prefs.showComposerPill,
+      keepComposerPill: this.prefs.keepComposerPill,
       openCodeAvailable: await this.openCodeAvailable(paseo),
       autoSwitch: this.prefs.autoSwitch,
       balanceNewAgents: this.prefs.balanceNewAgents,
@@ -4719,7 +4763,7 @@ export class Service {
   }
 
   /** Removes an account. Moving its agents can outlast the RPC: see `answerBy`. */
-  async remove(paseo: PaseoApi, accountId: string): Promise<{ affected: number; moves: ReopenSummary }> {
+  async remove(paseo: PaseoApi, accountId: string, signOut = false): Promise<{ affected: number; moves: ReopenSummary }> {
     const replyBy = Date.now() + REPLY_WAIT_MS;
     this.attach(paseo);
     const state = await this.store.read();
@@ -4752,11 +4796,15 @@ export class Service {
       .map(([agentId]) => agentId);
     // A home kept outside ZeroSub's own `homes/` (where added Claude and Pi accounts are kept) is the
     // user's: removing its account only takes it out of ZeroSub, and its folder, sign-in or key and
-    // script stay.
+    // script stay. Asked to, it's signed out too, once nothing runs on it. A Pi or Claude API account's
+    // sign-in is the key in its folder, which stays, so there's nothing to sign out.
     const kept = account.home !== null && !(await isOwnHome(account.home));
+    const signsOut = kept && signOut && account.family !== "pi" && account.auth !== "api" && !(await reachesCliHome(account.home!));
     await this.store.update((draft) => {
       draft.accounts = draft.accounts.filter((entry) => entry.id !== accountId);
-      if (account.home && !kept) draft.cleanup[account.home] = { family: account.family, accountId, why: "removed", at: new Date().toISOString() };
+      if (account.home && (!kept || signsOut)) {
+        draft.cleanup[account.home] = { family: account.family, accountId, why: "removed", at: new Date().toISOString(), ...(signsOut ? { signOutOnly: true } : {}) };
+      }
       for (const [agentId, binding] of Object.entries(draft.bindings)) {
         if (binding.accountId === accountId) delete draft.bindings[agentId];
       }
@@ -4771,7 +4819,10 @@ export class Service {
     this.setUsage(accountId, null);
     this.egress.delete(accountId);
     if (isLastResort(account)) await this.apiUsage.forget(accountId).catch((error: unknown) => log(`could not forget ${account.label}'s token counts`, error));
-    if (account.home && kept) console.log(`[ZeroSub] removed ${account.label} from ZeroSub only: ${account.home} isn't a folder ZeroSub made in ${homesDir()}, so its files and script stay`);
+    if (account.home && kept) {
+      const what = signsOut ? "it's signed out once nothing runs on it, and its files and script stay" : "its files and script stay";
+      console.log(`[ZeroSub] removed ${account.label} from ZeroSub only: ${account.home} isn't a folder ZeroSub made in ${homesDir()}; ${what}`);
+    }
     // Its script is released rather than deleted when its home stays (see writeLaunchers).
     await this.refreshLaunchers(account.home && !kept ? [account.home] : []).catch((error: unknown) => log("could not write the shell launchers", error));
     // Idle agents move now and busy ones after their turn. The home is signed out and deleted by the
@@ -4920,7 +4971,7 @@ export class Service {
    * `warning` says when they couldn't be checked. Secrets go only to the home's `bedrock.json`, and
    * the account is marked `provider: "bedrock"`.
    */
-  async addBedrockAccount(input: BedrockInput & { label: string }): Promise<{ accountId: string; warning: string | null }> {
+  async addBedrockAccount(input: BedrockInput & { label: string; shareSessions?: boolean }): Promise<{ accountId: string; warning: string | null }> {
     const account = bedrockFromInput(input, null);
     const identity = bedrockIdentity(account);
     const duplicate = accountsOf(await this.store.read(), "claude").find((entry) => entry.identity === identity);
@@ -4937,6 +4988,7 @@ export class Service {
       });
       await writeBedrockAccount(home, account);
       await this.adapters.claude.prepareHome(home);
+      if (input.shareSessions) await this.adapters.claude.shareSessions?.(home, true);
       await this.store.update((draft) => {
         const twin = accountsOf(draft, "claude").find((entry) => entry.identity === identity);
         if (twin) throw new Error(`Those AWS credentials in ${account.region} are already added as "${twin.label}".`);
@@ -5182,6 +5234,27 @@ export class Service {
     return proxy ? maskProxy(proxy) : null;
   }
 
+  /** Refuses sharing a new account's sessions folder where the family has no such choice. */
+  private canShareSessions(family: Family, share: boolean): void {
+    if (share && !this.adapters[family].shareSessions) throw new Error("Sessions can only be shared for Claude accounts.");
+  }
+
+  /**
+   * Shares an added Claude account's sessions folder with the CLI's own, or gives it its own again
+   * (see `shareClaudeSessions`). Says whether it's shared now.
+   */
+  async setSessionsShared(accountId: string, shared: boolean): Promise<boolean> {
+    return this.onAccount(accountId, async (account) => {
+      if (!account) throw new Error("That account no longer exists.");
+      const adapter = this.adapters[account.family];
+      if (!adapter.shareSessions || !adapter.sessionsShared || account.kind !== "managed" || !account.home) {
+        throw new Error("Sessions can only be shared for added Claude accounts.");
+      }
+      await adapter.shareSessions(account.home, shared, this.stillHas(account));
+      return adapter.sessionsShared(account.home);
+    });
+  }
+
   /**
    * A new proxy on the CLI login is also every added account's without one of its own, so it's
    * refused while one of those sends its key over plain http:// through it: to this machine too,
@@ -5286,13 +5359,16 @@ export class Service {
    * Adds a Pi account: an Anthropic API key, optionally sent to another base URL, with an optional
    * proxy. Set up in `homes/`, then moved to where Pi accounts are kept (see `placeHomes`).
    */
-  async addApiAccount(input: ApiAccountInput & { label: string; key: string; proxy?: string; family?: "claude" | "pi" }): Promise<string> {
+  async addApiAccount(
+    input: ApiAccountInput & { label: string; key: string; proxy?: string; family?: "claude" | "pi"; shareSessions?: boolean },
+  ): Promise<string> {
     // Pi's are an Anthropic API key and nothing else, so its form sends no kind; Claude's always says which.
     const family = input.family ?? (input.keyKind ? "claude" : "pi");
     const keyKind = input.keyKind ?? "api_key";
     const adapter = this.adapters[family];
     if (!adapter.setApi) throw new Error("API accounts aren't supported here.");
     if (family === "pi" && keyKind !== "api_key") throw new Error("Pi accounts use an API key (x-api-key), not an auth token.");
+    this.canShareSessions(family, input.shareSessions === true);
     const baseUrl = input.baseUrl?.trim() ? normalizeBaseUrl(input.baseUrl) : null;
     const proxy = input.proxy?.trim() ? normalizeProxy(input.proxy) : null;
     const key = input.key.trim();
@@ -5314,6 +5390,7 @@ export class Service {
       if (proxy) await adapter.setProxy?.(home, proxy);
       await adapter.setApi(home, { ...trafficSwitches(input), keyKind, key, baseUrl });
       await adapter.prepareHome(home);
+      if (input.shareSessions) await adapter.shareSessions?.(home, true);
       // A proxy typed in along with the key is the user's to trust; one the account would only inherit isn't.
       if (!proxy) await this.refuseClearText(adapter, home, baseUrl);
       await this.store.update((draft) => {
@@ -5500,7 +5577,8 @@ export class Service {
     const dir = homesDirFor(family, updated[key]);
     console.log(`[ZeroSub] added ${FAMILY_LABEL[family]} accounts' homes are kept in ${dir} now`);
     void this.placeHomes().catch((error: unknown) => log("moving accounts' homes failed", error));
-    return { dir: shownPath(dir), moving: (await this.dueMoves(updated)).filter((account) => account.family === family).length };
+    const moving = (await this.dueMoves(updated)).filter((account) => account.family === family && this.staying.get(account.id)?.home !== account.home);
+    return { dir: shownPath(dir), moving: moving.length };
   }
 
   setClaudeHomesDir(input: string): Promise<{ dir: string; moving: number }> {
@@ -5563,16 +5641,24 @@ export class Service {
     for (const accountId of this.moveNotes.keys()) {
       if (!due.some((account) => account.id === accountId) && !state.moves[accountId]) this.moveNotes.delete(accountId);
     }
+    for (const accountId of this.staying.keys()) {
+      if (!due.some((account) => account.id === accountId)) this.staying.delete(accountId);
+    }
     if (due.length === 0) return this.forgetEmptiedFolders(state);
+    // A home known to stay where it is is left alone, not even scanned, until it's asked about again (see `whyStays`).
+    const movable: typeof due = [];
+    for (const account of due) {
+      if (this.staying.get(account.id)?.home !== account.home || !(await this.whyStays(account))) movable.push(account);
+    }
     const inUse = new Set<string>();
     const unknown = new Set<string>();
     for (const family of PLACED) {
-      const homes = due.filter((account) => account.family === family).map((account) => account.home);
+      const homes = movable.filter((account) => account.family === family).map((account) => account.home);
       if (homes.length === 0) continue;
       try {
         for (const home of await this.adapters[family].homesInUse!(homes)) inUse.add(home);
       } catch (error) {
-        for (const account of due.filter((entry) => entry.family === family)) {
+        for (const account of movable.filter((entry) => entry.family === family)) {
           unknown.add(account.id);
           this.moveNotes.set(account.id, { waiting: null, error: `ZeroSub couldn't tell whether anything runs on it: ${describe(error)}` });
         }
@@ -5580,12 +5666,17 @@ export class Service {
     }
     const taken = new Set(state.accounts.flatMap((account) => (account.home ? [resolve(account.home)] : [])));
     let moved = false;
-    for (const account of due) {
+    for (const account of movable) {
       if (unknown.has(account.id)) continue;
       const family = account.family as PlacedFamily;
       const waiting = this.moveBlocker(account, inUse);
       if (waiting) {
         this.moveNotes.set(account.id, { waiting, error: null });
+        continue;
+      }
+      // Asked once nothing else holds it back: a home that has to stay where it is would only fail again.
+      if (await this.whyStays(account)) {
+        this.moveNotes.delete(account.id);
         continue;
       }
       const to = await placeFor(account, homesDirFor(family, state[HOMES_KEY[family]]), taken);
@@ -5635,6 +5726,24 @@ export class Service {
     if ((this.homeCalls.get(home) ?? 0) > 0) return "ZeroSub is working on it";
     if (Date.now() - (this.routedAt.get(account.id) ?? 0) < ROUTED_SETTLE_MS) return "an agent has just started on it";
     return null;
+  }
+
+  /**
+   * Why an account's home has to stay where it is (see `FamilyAdapter.homeStays`), or null when it
+   * can move. Once it stays, it's asked again only after `HOME_STAYS_MS`, and moves once the answer
+   * changes. When asking fails, the move is tried, and says what went wrong.
+   */
+  private async whyStays(account: StoredAccount & { home: string }): Promise<string | null> {
+    const known = this.staying.get(account.id);
+    if (known?.home === account.home && Date.now() - known.at < HOME_STAYS_MS) return known.why;
+    const why = (await this.adapters[account.family].homeStays?.(account.home).catch(() => null)) ?? null;
+    if (!why) {
+      this.staying.delete(account.id);
+      return null;
+    }
+    if (known?.home !== account.home || known.why !== why) console.log(`[ZeroSub] the home of ${account.label} stays in ${account.home}: ${why}`);
+    this.staying.set(account.id, { home: account.home, why, at: Date.now() });
+    return why;
   }
 
   /**
@@ -5841,11 +5950,11 @@ export class Service {
 
   // ------------------------------------------------------------------ RPC: sign-in
 
-  startLogin(family: Family, method: LoginMethod, accountId?: string, proxy?: string): Promise<LoginView> {
-    return this.loginLocks[family].run(() => this.beginLogin(family, method, accountId, proxy));
+  startLogin(family: Family, method: LoginMethod, accountId?: string, proxy?: string, shareSessions?: boolean): Promise<LoginView> {
+    return this.loginLocks[family].run(() => this.beginLogin(family, method, accountId, proxy, shareSessions));
   }
 
-  private async beginLogin(family: Family, method: LoginMethod, accountId?: string, proxyInput?: string): Promise<LoginView> {
+  private async beginLogin(family: Family, method: LoginMethod, accountId?: string, proxyInput?: string, shareSessions?: boolean): Promise<LoginView> {
     // Pi's added accounts are API keys, and its own login signs in inside Pi.
     if (family === "pi") throw new Error("Pi accounts use an Anthropic API key: add one with Add account, or change its key from its card. Sign Pi's own login in with /login inside Pi.");
     let availability = this.availability.get(family);
@@ -5870,6 +5979,9 @@ export class Service {
     // A new account's proxy is in place before the CLI starts, so the sign-in itself goes through it.
     const proxy = !existing && proxyInput?.trim() ? normalizeProxy(proxyInput) : null;
     if (proxy && !this.adapters[family].setProxy) throw new Error(`A proxy can't be set for ${FAMILY_LABEL[family]} accounts yet.`);
+    // Only a new account's sessions folder is chosen here; an existing one keeps what it has.
+    const share = !existing && shareSessions === true;
+    this.canShareSessions(family, share);
 
     const id = randomBytes(6).toString("hex");
     const home = existing ? existing.home : join(homesDir(), `${family}-${id}`);
@@ -5905,6 +6017,8 @@ export class Service {
       }
       if (home && proxy) await this.adapters[family].setProxy?.(home, proxy);
       if (home) await this.adapters[family].prepareHome(home, existing ? this.stillHas(existing) : undefined);
+      // Shared before the CLI starts, as the proxy is; an abandoned sign-in's home goes with its link.
+      if (home && share) await this.adapters[family].shareSessions?.(home, true);
       const handle = await this.adapters[family].login(home, method);
       if (session.finishedAt) {
         handle.cancel();

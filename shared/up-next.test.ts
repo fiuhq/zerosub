@@ -84,6 +84,7 @@ function view(id: string, weeklyUsed: number, resetsInHours: number, patch: Part
     bedrock: null,
     apiError: null,
     pace: null,
+    sessionsShared: null,
     ...patch,
   };
 }

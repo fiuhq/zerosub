@@ -1,11 +1,12 @@
 import { FAMILY_LABEL, FAMILY_PORTABLE, type AccountView } from "../shared/model";
 import { egressText, isDisabled } from "../shared/format";
 
-export type CardActionKey = "clear" | "next" | "default" | "toggle" | "projects" | "usage" | "api" | "azure" | "bedrock" | "proxy" | "rename" | "remove";
+export type CardActionKey = "clear" | "next" | "default" | "toggle" | "projects" | "usage" | "api" | "azure" | "bedrock" | "proxy" | "sessions" | "rename" | "remove";
 
 /** Which buttons an account's card shows, in order. The card gives each its icon, label and handler. */
 export function cardActions(
-  account: Pick<AccountView, "family" | "kind" | "auth" | "status" | "disabled" | "isDefault" | "nextAgentUntil" | "apiEditable" | "proxyEditable" | "azure" | "bedrock">,
+  account: Pick<AccountView, "family" | "kind" | "auth" | "status" | "disabled" | "isDefault" | "nextAgentUntil" | "apiEditable" | "proxyEditable" | "azure" | "bedrock"> &
+    Partial<Pick<AccountView, "sessionsShared">>,
 ): CardActionKey[] {
   const disabled = isDisabled(account);
   const signedOut = account.status === "signed_out";
@@ -26,6 +27,8 @@ export function cardActions(
   else if (account.bedrock) keys.push("bedrock");
   else if (account.auth === "api" || account.apiEditable) keys.push("api");
   if (account.proxyEditable) keys.push("proxy");
+  // Only an added Claude account's can be shared, and an older server doesn't say.
+  if (typeof account.sessionsShared === "boolean") keys.push("sessions");
   keys.push("rename");
   if (account.kind !== "main") keys.push("remove");
   return keys;
@@ -38,7 +41,7 @@ export const INLINE_CARD_ACTIONS = 3;
 const INLINE_FIRST: readonly CardActionKey[] = ["clear", "usage", "default", "next"];
 
 /**
- * A wide card's buttons sit beside the account's name, and eight of them leave the name little
+ * A wide card's buttons sit beside the account's name, and nine of them leave the name little
  * room. So up to `INLINE_CARD_ACTIONS` stay there and the rest open from "…" into a row under it.
  * One button more than that fits as well as "…" does, so then they all stay. Both keep the card's order.
  */
@@ -54,12 +57,29 @@ function conversationsMove(family: AccountView["family"]): boolean {
   return FAMILY_PORTABLE[family];
 }
 
-/** What the Remove dialog says, and its button's tooltip. */
-export function removeText(account: Pick<AccountView, "family" | "auth" | "home" | "externalHome" | "launcher" | "azure" | "bedrock">): { body: string; tooltip: string } {
+/**
+ * Whether the Remove dialog asks about signing the account out: its folder is outside ZeroSub's own,
+ * so it stays, signed in unless the user says otherwise. A Pi account's key is in that folder.
+ */
+export function offersSignOut(account: Pick<AccountView, "family" | "auth" | "externalHome">): boolean {
+  return account.externalHome && account.family !== "pi" && account.auth !== "api";
+}
+
+/** What the Remove dialog says, and its button's tooltip; `signOut`, when it's asked to sign the account out too. */
+export function removeText(
+  account: Pick<AccountView, "family" | "auth" | "home" | "externalHome" | "launcher" | "azure" | "bedrock">,
+  signOut = false,
+): { body: string; tooltip: string } {
   const moves = conversationsMove(account.family);
   const keyed = account.family === "pi" || account.auth === "api";
-  const what = account.externalHome
-    ? `This only removes the account from ZeroSub. Its folder${account.home ? ` (${account.home})` : ""} is outside ZeroSub's own, so its sign-in${
+  const folder = `Its folder${account.home ? ` (${account.home})` : ""} is outside ZeroSub's own`;
+  const signingOut = signOut && offersSignOut(account);
+  const what = signingOut
+    ? `This removes the account from ZeroSub and signs it out on this machine once no agent runs on it. ${folder}, so its files${
+        account.launcher ? ` and its terminal script ${account.launcher}` : ""
+      } stay.`
+    : account.externalHome
+    ? `This only removes the account from ZeroSub. ${folder}, so its sign-in${
         account.launcher ? `, its files and its terminal script ${account.launcher}` : " and its files"
       } stay as they are, and you can add it back by hand.`
     : account.bedrock
@@ -72,13 +92,15 @@ export function removeText(account: Pick<AccountView, "family" | "auth" | "home"
   const agents = moves
     ? "Agents using it move to the default account; their conversations are kept."
     : `New agents use the default account. Existing ${FAMILY_LABEL[account.family]} conversations on it can't move, so start new agents for them.`;
-  const action = account.externalHome
-    ? "Remove it from ZeroSub only"
-    : account.bedrock
-      ? "Delete its AWS settings"
-      : keyed
-        ? "Delete its saved key"
-        : "Sign it out and delete its saved login";
+  const action = signingOut
+    ? "Remove it from ZeroSub and sign it out"
+    : account.externalHome
+      ? "Remove it from ZeroSub only"
+      : account.bedrock
+        ? "Delete its AWS settings"
+        : keyed
+          ? "Delete its saved key"
+          : "Sign it out and delete its saved login";
   return { body: `${what} ${agents}`, tooltip: `${action}; ${moves ? "its agents move to the default" : "new agents use the default"}` };
 }
 

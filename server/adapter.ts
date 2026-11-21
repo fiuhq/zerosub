@@ -113,6 +113,10 @@ export interface FamilyAdapter {
    * `wanted`, if given, is asked once nothing else works on the home; false leaves it untouched.
    */
   prepareHome(home: string, wanted?: () => Promise<boolean>): Promise<void>;
+  /** Whether a managed home's sessions folder is main's (Claude only); each home has its own unless shared. */
+  sessionsShared?(home: string): Promise<boolean>;
+  /** Shares a managed home's sessions folder with main's, or gives it its own again; `wanted` as for `prepareHome`. */
+  shareSessions?(home: string, share: boolean, wanted?: () => Promise<boolean>): Promise<void>;
   /**
    * `home === null` is the CLI's own login. `session`, when the patch is for a session Paseo opens:
    * the folder it runs in.
@@ -171,6 +175,12 @@ export interface FamilyAdapter {
    * CLI started on it, lacks. Tells which of two folders an interrupted move left is the account.
    */
   holdsAccount?(home: string): Promise<boolean>;
+  /**
+   * Why `home`'s folder has to stay where it is, though it's due to move: what the CLI keeps for it
+   * outside the folder can't be carried along safely (Claude's Keychain entry, when it's too long to
+   * write without showing it in the process list). Null when it can move.
+   */
+  homeStays?(home: string): Promise<string | null>;
   /**
    * Before a home's folder moves from `from` to `to`: copies what the CLI keeps for it outside the
    * folder (Claude's Keychain entry on macOS) to where it looks for `to`'s, and checks the copy.

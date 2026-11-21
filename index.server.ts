@@ -29,6 +29,7 @@ import {
   importAccount,
   importPiAccount,
   setAccountProxy,
+  setAccountSessionsShared,
   setClaudeHomesDir,
   setPiHomesDir,
   startLogin,
@@ -123,15 +124,15 @@ export default function contribute(server: PluginServerContext) {
   }
 
   server.handle(getState, ({ refreshUsage, accountId }, { paseo }) => service.view(paseo, refreshUsage, accountId));
-  server.handle(startLogin, ({ family, method, accountId, proxy }) => service.startLogin(family, method, accountId, proxy));
+  server.handle(startLogin, ({ family, method, accountId, proxy, shareSessions }) => service.startLogin(family, method, accountId, proxy, shareSessions));
   server.handle(submitLoginCode, ({ loginId, code }) => service.submitCode(loginId, code));
   server.handle(cancelLogin, ({ loginId }) => service.cancelLogin(loginId));
   server.handle(renameAccount, async ({ accountId, label }) => {
     await service.rename(accountId, label);
     return { ok: true as const };
   });
-  server.handle(removeAccount, async ({ accountId }, { paseo }) => {
-    const { affected, moves } = await service.remove(paseo, accountId);
+  server.handle(removeAccount, async ({ accountId, signOut }, { paseo }) => {
+    const { affected, moves } = await service.remove(paseo, accountId, signOut === true);
     return { ok: true as const, movedAgents: affected, moves };
   });
   server.handle(setNextAgentAccount, ({ accountId, enabled }) => service.setNextAgent(accountId, enabled));
@@ -157,6 +158,7 @@ export default function contribute(server: PluginServerContext) {
   server.handle(updateBedrockAccount, async ({ accountId, ...input }) => ({ ok: true as const, ...(await service.updateBedrockAccount(accountId, input)) }));
   server.handle(detectBedrockRegion, () => service.detectBedrockRegion());
   server.handle(setAccountProxy, async ({ accountId, proxy }) => ({ ok: true as const, proxy: await service.setProxy(accountId, proxy) }));
+  server.handle(setAccountSessionsShared, async ({ accountId, shared }) => ({ ok: true as const, shared: await service.setSessionsShared(accountId, shared) }));
   server.handle(setClaudeHomesDir, async ({ dir }) => ({ ok: true as const, ...(await service.setClaudeHomesDir(dir)) }));
   server.handle(importAccount, async ({ path }) => ({ accountId: await service.importAccount(path) }));
   server.handle(setPiHomesDir, async ({ dir }) => ({ ok: true as const, ...(await service.setPiHomesDir(dir)) }));

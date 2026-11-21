@@ -541,8 +541,19 @@ export const AccountViewSchema = z.object({
   bedrock: BedrockSummarySchema.nullable().default(null),
   /** What the provider said when it last refused an Azure or Bedrock account, while it's signed out for it. */
   apiError: z.string().nullable().default(null),
-  /** The account's home is due to move to `to`, and hasn't yet: what it waits for, or what went wrong. */
-  moving: z.object({ to: z.string(), waiting: z.string().nullable(), error: z.string().nullable() }).nullable().default(null),
+  /**
+   * Whether this added Claude account's sessions folder is the CLI's own, so Claude Code started on
+   * any account that shares it sees the others' sessions; null where there's no such choice.
+   */
+  sessionsShared: z.boolean().nullable().default(null),
+  /**
+   * The account's home is due to move to `to`, and hasn't yet: what it waits for, or what went wrong.
+   * `stays`: why it stays where it is instead, which isn't an error (null from older servers).
+   */
+  moving: z
+    .object({ to: z.string(), waiting: z.string().nullable(), error: z.string().nullable(), stays: z.string().nullable().default(null) })
+    .nullable()
+    .default(null),
   /** How pacing reads this account; null unless spreading is on and it's one of two or more accounts that can stand in. */
   pace: PaceViewSchema.nullable().default(null),
 });
@@ -654,6 +665,8 @@ export const StateViewSchema = z.object({
   /** The folder added Claude accounts' homes are kept in (`~/.claude-config`, say), and whether it's the default. */
   claudeHomes: z.object({ dir: z.string(), isDefault: z.boolean() }).nullable().default(null),
   showComposerPill: z.boolean(),
+  /** The account pill shows on a running agent while its Account control isn't on screen. */
+  keepComposerPill: z.boolean().default(true),
   /** This host's Paseo lists OpenCode as available, so "Continue on OpenCode" can work. */
   openCodeAvailable: z.boolean().default(false),
   /** Accounts at their limit are skipped, so agents can't be moved onto one by hand either. */
