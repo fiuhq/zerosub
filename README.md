@@ -159,7 +159,7 @@ Some plans come with banked limit resets: ChatGPT's reset credits, and Claude Co
 
 - A reset can't be undone, so ZeroSub always asks first and says what it refills. Asking again while one is still being used, or within five minutes of one, doesn't spend another.
 - **ChatGPT** uses Codex's own reset-credit API, the same one as `/usage` → reset in the Codex CLI. It never spends a credit while nothing is used up.
-- **Claude** uses Claude Code's limit-reset endpoint. Anthropic decides which accounts get resets; so far it reports the tested accounts as not eligible, so the button may not appear for Claude. It shows up by itself once an account has a reset.
+- **Claude** uses Claude Code's limit-reset endpoint. Anthropic decides which accounts get resets; so far it reports the tested accounts as not eligible, so the button may not appear for Claude. It shows up by itself once an account has a reset. A Fable reset refills only the Fable share of the week, so ZeroSub never spends one: the card shows how many are banked and says to use them in Claude under Settings → Usage.
 - **Use banked resets when every account is out** (off by default) spends one automatically, but only when every account of that provider is at its limit and the provider confirms the limit at that moment.
 
 ### ChatGPT credits
