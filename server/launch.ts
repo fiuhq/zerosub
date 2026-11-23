@@ -11,7 +11,8 @@ import { preferences } from "../shared/preferences";
 import type { EnvPatch } from "./adapter";
 import { ClaudeAdapter } from "./claude";
 import { paseoHome, statePath } from "./paths";
-import { chooseAccount, type EarlyLines } from "./routing";
+import { launchesSince, noteLaunch } from "./launches";
+import { chooseAccount, PENDING_MS, type EarlyLines } from "./routing";
 import { StateStore, type StoredAccount, type StoredState } from "./state";
 import { loadReadings } from "./usage";
 
@@ -26,13 +27,17 @@ export function earlyLines(prefs: Preferences): EarlyLines | null {
   return prefs.autoSwitch && (lines.short < 100 || lines.long < 100) ? lines : null;
 }
 
-/** The account a brand-new agent of `family` would open on now; null when ZeroSub has none. */
+/**
+ * The account a brand-new agent of `family` would open on now; null when ZeroSub has none. `launched`
+ * counts each account's recent launches, which its reading can't show yet (see `launchesSince`).
+ */
 export function launchAccount(
   state: StoredState,
   readings: ReadonlyMap<string, Usage>,
   prefs: Preferences,
   family: Family,
   now: number,
+  launched: ReadonlyMap<string, number> = new Map(),
 ): StoredAccount | null {
   return (
     chooseAccount(state, {
@@ -46,6 +51,7 @@ export function launchAccount(
       portable: FAMILY_PORTABLE[family],
       usageOf: (id) => readings.get(id),
       early: earlyLines(prefs),
+      pendingOf: (id) => launched.get(id) ?? 0,
     })?.account ?? null
   );
 }
@@ -95,9 +101,12 @@ async function main(): Promise<void> {
   if (family !== "claude") throw new Error(`zerosub launch: only claude is supported, got ${family}`);
   const read = readState(statePath());
   const state = await read();
-  const chosen = launchAccount(state, await loadReadings(), await readPreferences(), family, Date.now());
+  const now = Date.now();
+  const chosen = launchAccount(state, await loadReadings(), await readPreferences(), family, now, await launchesSince(now - PENDING_MS));
   if (!chosen) throw new Error("zerosub launch: ZeroSub has no Claude account to route to");
   const account = await settledAccount(state, chosen.id, read);
+  // Only a pacing hint for the next launches: one that can't be noted still launches, and says so.
+  await noteLaunch(account.id, now).catch((error: unknown) => console.error(`[ZeroSub] could not note the launch on ${account.label}:`, error));
   // Said on stderr so the caller's log names the account; stdout is only the env to apply.
   console.error(`[ZeroSub] launch → ${account.label}`);
   console.log(shellExports(await new ClaudeAdapter().env(account.home)));

@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Usage, UsageWindow } from "../shared/model";
 import type { FamilyAdapter, UsageRead } from "./adapter";
 import type { FamilyResolver } from "./families";
+import { noteLaunch } from "./launches";
 import type { Reopener } from "./reopen";
 import { chooseAccount, hasRoom, nearlyFull } from "./routing";
 import { everyFamily } from "./test-families";
@@ -263,6 +265,22 @@ async function setUp(levels: Record<string, [number, number]>, state: Partial<St
   const turnStarts = () => service.onTurnStarted({ id: AGENT, provider: "claude" }, context);
   return { service, store, reads, reopened, notes, turnEnds, turnStarts, agent, paseo, context };
 }
+
+describe("agents the launcher started outside Paseo", () => {
+  it("count against their account when a new agent is placed", async () => {
+    // A burst of launches on MAIN that its reading can't show yet: 4 x 10% of the 5-hour window.
+    const levels: Record<string, [number, number]> = { [MAIN]: [0, 0], [SPARE]: [20, 0] };
+    const open = async (agentId: string) => {
+      const { service, store, context } = await setUp(levels, {}, { balanceNewAgents: true });
+      await service.onSessionOpen({ agentId, provider: "claude", reason: "create", purpose: "interactive", env: {} } as never, context);
+      return (await store.read()).bindings[agentId]?.accountId;
+    };
+    expect(await open("fresh-1")).toBe(MAIN);
+    mkdirSync(join(root, "zerosub"), { recursive: true });
+    for (let i = 0; i < 4; i += 1) await noteLaunch(MAIN, Date.now());
+    expect(await open("fresh-2")).toBe(SPARE);
+  });
+});
 
 describe("an agent opening again on a nearly full account", () => {
   const OTHER = "claude-other";

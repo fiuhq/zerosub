@@ -58,6 +58,15 @@ describe("launchAccount", () => {
     expect(launchAccount(s, readings, { ...noBalance, autoSwitch: false }, "claude", NOW)?.id).toBe("main");
   });
 
+  it("spreads a burst: each launch on an account in the last minutes counts against it", () => {
+    // README: spreading charges 10% of the 5-hour window per agent placed in the last 10 minutes.
+    const s = state([account({ id: "main" }), account({ id: "spare" })], { defaults: { claude: "main" } });
+    const readings = new Map([["main", usage(0)], ["spare", usage(30)]]);
+    const spreading = { ...prefs, balanceNewAgents: true };
+    expect(launchAccount(s, readings, spreading, "claude", NOW)?.id).toBe("main");
+    expect(launchAccount(s, readings, spreading, "claude", NOW, new Map([["main", 4]]))?.id).toBe("spare");
+  });
+
   it("answers null when ZeroSub has no account of the family", () => {
     expect(launchAccount(state([]), new Map(), prefs, "claude", NOW)).toBeNull();
   });

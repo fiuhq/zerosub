@@ -102,6 +102,7 @@ import { maskProxy, normalizeProxy } from "./proxy";
 import { Reopener, hostCanReload } from "./reopen";
 import { SwitchGuard } from "./switch-guard";
 import { loadReadings, mergeUsage, pastReset, saveReadings, showLimit } from "./usage";
+import { launchesSince } from "./launches";
 import { canStandIn, chooseAccount, fiveHourWindow, headroomScore, isLastResort, isLimited, isLimitedFor, isPaidStandIn, isUsable, mostAvailable, nearlyFull, paceScore, paceView, PENDING_MS, quotaCeilingHit, reservedElsewhere, roomyAccount, scopeCoversModel, weeklyWindow, withBankedReset, type EarlyLines, type Pacing, type RouteDecision, type RouteInput } from "./routing";
 import { BurnTracker, turnHorizon } from "./burn";
 import {
@@ -728,11 +729,12 @@ export class Service {
     // so switch early has current numbers to pick a new or reopening agent's account from.
     const lines = this.early;
     const pressed = new Set(lines ? state.accounts.filter((account) => nearlyFull(this.usage.get(account.id), lines, now).length > 0).map((account) => account.family) : []);
+    this.launched = await launchesSince(now - PENDING_MS);
     for (const account of state.accounts) {
       // One still on record (both folders there, say) waits: its folder isn't settled.
       if (state.moves[account.id]) continue;
       const attempted = this.usageAttemptAt.get(account.id) ?? 0;
-      const busy = now - (this.activeAt.get(account.id) ?? 0) < ACTIVE_WINDOW_MS;
+      const busy = now - (this.activeAt.get(account.id) ?? 0) < ACTIVE_WINDOW_MS || this.launched.has(account.id);
       const isDefault = defaultAccount(state, account.family)?.id === account.id;
       const every = account.disabled
         ? USAGE_IDLE_MS
@@ -1145,8 +1147,11 @@ export class Service {
   }
 
   private pendingOn(accountId: string, now: number): number {
-    return this.placements.filter((placement) => placement.accountId === accountId && placement.at > now - PENDING_MS).length;
+    return this.placements.filter((placement) => placement.accountId === accountId && placement.at > now - PENDING_MS).length + (this.launched.get(accountId) ?? 0);
   }
+
+  /** Recent launches outside Paseo per account (see `launches.ts`), re-read before each decision. */
+  private launched = new Map<string, number>();
 
   private pacing(now: number): Pacing | undefined {
     return this.prefs.balanceNewAgents ? { pendingOf: (id) => this.pendingOn(id, now) } : undefined;
@@ -1221,6 +1226,7 @@ export class Service {
     // A move a stop cut short is finished first, so no session opens on a folder that has moved.
     if (this.hasRecordedMoves(await this.store.read())) await this.finishRecordedMoves();
     const now = Date.now();
+    this.launched = await launchesSince(now - PENDING_MS);
     const interactive = request.purpose === "interactive";
     // The first session a reload of ours opens is the one it rolls back if the reload fails.
     const reload = interactive ? this.reloads.get(request.agentId) : undefined;
