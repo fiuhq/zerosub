@@ -6400,6 +6400,11 @@ function preferClaudeLogin(state: StoredState, account: StoredAccount, peer: Sto
   for (const binding of Object.values(state.bindings)) {
     if (binding.accountId === peer.id) binding.accountId = account.id;
   }
+  const owned = new Set(state.projects.filter((rule) => rule.accountId === account.id).map((rule) => rule.projectId));
+  state.projects = state.projects.filter((rule) => rule.accountId !== peer.id || !owned.has(rule.projectId));
+  for (const rule of state.projects) {
+    if (rule.accountId === peer.id) rule.accountId = account.id;
+  }
   const now = Date.now();
   if (isLimited(peer, now) && !isLimited(account, now)) {
     const { limitedUntil, limitKind, limitedAt, limitSource } = peer;

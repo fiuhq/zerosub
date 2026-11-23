@@ -770,6 +770,23 @@ describe("adding a folder that's already signed in", () => {
     expect(state.bindings.agent).toEqual(disabled ? undefined : binding);
   });
 
+  it("moves a project kept for the CLI login to the isolated login and back on removal", async () => {
+    const { service, store, fake } = start();
+    const folder = join(root, "elsewhere", "claude-isolated");
+    await makeHome(folder);
+    fake.signedIn.add(folder);
+    await seed({
+      accounts: [{ ...main, signedIn: true, email: "ada@example.com", identity: "personal|ada@example.com" }],
+      projects: [{ projectId: "p", accountId: main.id, name: "P" }],
+    });
+
+    const id = await service.importAccount(folder);
+    expect((await store.read()).projects).toEqual([{ projectId: "p", accountId: id, name: "P" }]);
+
+    await service.remove(paseo, id);
+    expect((await store.read()).projects).toEqual([{ projectId: "p", accountId: main.id, name: "P" }]);
+  });
+
   it("leaves existing matching logins and pins alone during identity refresh", async () => {
     const { service, store, fake } = start();
     const folder = join(root, "elsewhere", "claude-isolated");
