@@ -725,7 +725,7 @@ export class Service {
     if (this.hasRecordedMoves(await this.store.read())) await this.finishRecordedMoves();
     const state = await this.store.read();
     // While an account is nearly full, its family's other accounts are read as often as the default,
-    // so switch early has current numbers to pick a new agent's account from.
+    // so switch early has current numbers to pick a new or reopening agent's account from.
     const lines = this.early;
     const pressed = new Set(lines ? state.accounts.filter((account) => nearlyFull(this.usage.get(account.id), lines, now).length > 0).map((account) => account.family) : []);
     for (const account of state.accounts) {

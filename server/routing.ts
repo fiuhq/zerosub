@@ -477,7 +477,7 @@ export interface RouteInput {
    */
   portable: boolean;
   usageOf(accountId: string): Usage | null | undefined;
-  /** Switch early: keep brand-new agents off nearly full accounts. Null when it's off. */
+  /** Switch early: keep new and reopening agents off nearly full accounts. Null when it's off. */
   early?: EarlyLines | null;
   /**
    * Whether a session really opens now (Paseo's session_open), rather than routing working out where
