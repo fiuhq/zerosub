@@ -1,4 +1,4 @@
-import { appendFile, readFile, rename, stat } from "node:fs/promises";
+import { appendFile, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dataDir } from "./paths";
 
@@ -43,4 +43,36 @@ export async function launchesSince(since: number, path = launchesPath()): Promi
     }
   }
   return counts;
+}
+
+/** A lock this old belongs to a launcher that died holding it; choosing and noting take milliseconds. */
+export const LAUNCH_LOCK_STALE_MS = 5_000;
+/** How long a launch waits for the lock before choosing without it, rather than hold up its caller. */
+const LAUNCH_LOCK_WAIT_MS = 2_000;
+
+/** Runs `fn` holding the launch log's lock file, so launches started at once choose one at a time. */
+export async function withLaunchLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const lock = `${path}.lock`;
+  const until = Date.now() + LAUNCH_LOCK_WAIT_MS;
+  let held = false;
+  while (!held) {
+    try {
+      await writeFile(lock, String(process.pid), { flag: "wx" });
+      held = true;
+    } catch (error) {
+      const waited = (error as NodeJS.ErrnoException).code === "EEXIST" && Date.now() < until;
+      if (!waited) {
+        console.error(`[ZeroSub] choosing without the launch lock (${lock}):`, error);
+        break;
+      }
+      const age = await stat(lock).then((info) => Date.now() - info.mtimeMs, () => 0);
+      if (age > LAUNCH_LOCK_STALE_MS) await rm(lock, { force: true });
+      else await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    if (held) await rm(lock, { force: true });
+  }
 }

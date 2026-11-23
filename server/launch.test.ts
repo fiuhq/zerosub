@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Usage } from "../shared/model";
 import { preferences } from "../shared/preferences";
-import { earlyLines, launchAccount, readState, settledAccount, shellExports } from "./launch";
+import { earlyLines, launchAccount, pickLaunch, readState, settledAccount, shellExports } from "./launch";
 import { emptyState, type StoredAccount, type StoredState } from "./state";
 
 const NOW = Date.parse("2026-10-29T04:30:00Z");
@@ -69,6 +69,21 @@ describe("launchAccount", () => {
 
   it("answers null when ZeroSub has no account of the family", () => {
     expect(launchAccount(state([]), new Map(), prefs, "claude", NOW)).toBeNull();
+  });
+});
+
+describe("pickLaunch", () => {
+  const dirs: string[] = [];
+  afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+
+  it("spreads launches started at the same instant, each noted before the next one chooses", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "zerosub-pick-"));
+    dirs.push(dir);
+    const log = join(dir, "launches.jsonl");
+    const s = state([account({ id: "main" }), account({ id: "spare" })], { defaults: { claude: "main" } });
+    const readings = new Map([["main", usage(0)], ["spare", usage(30)]]);
+    const picks = await Promise.all(Array.from({ length: 6 }, () => pickLaunch(s, readings, { ...prefs, balanceNewAgents: true }, "claude", log)));
+    expect(new Set(picks.map((pick) => pick?.id))).toEqual(new Set(["main", "spare"]));
   });
 });
 

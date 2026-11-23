@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { LAUNCH_LOG_MAX_BYTES, launchesSince, noteLaunch } from "./launches";
+import { LAUNCH_LOCK_STALE_MS, LAUNCH_LOG_MAX_BYTES, launchesSince, noteLaunch, withLaunchLock } from "./launches";
 
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -38,5 +38,34 @@ describe("the launch log", () => {
     await noteLaunch("a", 5, file);
     expect(await launchesSince(0, file)).toEqual(new Map([["a", 1]]));
     expect(existsSync(`${file}.1`)).toBe(true);
+  });
+});
+
+describe("the launch lock", () => {
+  it("runs one holder at a time and lets go after each", async () => {
+    const file = logFile();
+    let inside = 0;
+    let most = 0;
+    await Promise.all(
+      Array.from({ length: 5 }, () =>
+        withLaunchLock(file, async () => {
+          most = Math.max(most, (inside += 1));
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          inside -= 1;
+        }),
+      ),
+    );
+    expect(most).toBe(1);
+    expect(existsSync(`${file}.lock`)).toBe(false);
+  });
+
+  it("takes over a lock a launcher died holding", async () => {
+    const file = logFile();
+    writeFileSync(`${file}.lock`, "12345");
+    const old = (Date.now() - LAUNCH_LOCK_STALE_MS - 1_000) / 1000;
+    utimesSync(`${file}.lock`, old, old);
+    const started = Date.now();
+    expect(await withLaunchLock(file, async () => "ran")).toBe("ran");
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
