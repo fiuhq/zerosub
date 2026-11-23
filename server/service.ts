@@ -86,6 +86,7 @@ import {
   type BedrockHost,
   type RegionSource,
 } from "./bedrock";
+import { sharesClaudeCliCredentials } from "./claude";
 import { codexHandoffMode, encryptedResumeFailure, sameWorkspace, turnFailedText } from "./codex-same-conversation";
 import { CodexContinuations, MESSAGE_PREFIX, UnresolvableEpochError, fitInstructions, matchesTransfer, readUpdates, ready, sentDigestOf, snapshot, transferMarker, waitForCreated, waitForSource, type Agent } from "./continuations";
 import { CONTINUED_FROM_LABEL, PARENT_LABEL, buildTranscript, continueInNewAgent, continuationPrompt, promptInstruction, updatePrompt, type Continuation } from "./handoff";
@@ -101,7 +102,7 @@ import { maskProxy, normalizeProxy } from "./proxy";
 import { Reopener, hostCanReload } from "./reopen";
 import { SwitchGuard } from "./switch-guard";
 import { loadReadings, mergeUsage, pastReset, saveReadings, showLimit } from "./usage";
-import { canStandIn, chooseAccount, fiveHourWindow, headroomScore, isLastResort, isLimited, isLimitedFor, isPaidStandIn, isUsable, mostAvailable, nearlyFull, paceScore, paceView, PENDING_MS, reservedElsewhere, roomyAccount, scopeCoversModel, weeklyWindow, withBankedReset, type EarlyLines, type Pacing, type RouteDecision, type RouteInput } from "./routing";
+import { canStandIn, chooseAccount, fiveHourWindow, headroomScore, isLastResort, isLimited, isLimitedFor, isPaidStandIn, isUsable, mostAvailable, nearlyFull, paceScore, paceView, PENDING_MS, quotaCeilingHit, reservedElsewhere, roomyAccount, scopeCoversModel, weeklyWindow, withBankedReset, type EarlyLines, type Pacing, type RouteDecision, type RouteInput } from "./routing";
 import { BurnTracker, turnHorizon } from "./burn";
 import {
   ALL_SOURCES,
@@ -1163,7 +1164,7 @@ export class Service {
 
   /** One log line per balanced placement: every candidate's pace scores and recent 5-hour readings. */
   private logPlacement(state: StoredState, family: Family, agentId: string, chosen: StoredAccount, now: number, why: string): void {
-    const parts = accountsOf(state, family).filter((account) => canStandIn(account, now)).map((account) => {
+    const parts = accountsOf(state, family).filter((account) => canStandIn(account, now, null, this.usage.get(account.id))).map((account) => {
       const pace = paceScore(this.usage.get(account.id), this.pendingOn(account.id, now), now);
       const seen = (this.usageHistory.get(account.id) ?? []).slice(-4).map((entry) => entry.fiveHour ?? "?").join("/") || "none";
       return `${account.label} 5h ${pace.fiveHour.toFixed(1)} wk ${pace.weekly.toFixed(1)} score ${pace.score.toFixed(1)} gated ${pace.gated ? "yes" : "no"} pending ${this.pendingOn(account.id, now)} seen 5h ${seen}`;
@@ -1705,7 +1706,7 @@ export class Service {
       if (!account || this.runningOn(state, agentId, family) !== accountId) return;
       if (state.bindings[agentId]?.source === "user" || !this.switchGuard.allows(agentId, now)) return;
       // Idle accounts are read rarely; read the candidates now so the pick rests on current numbers.
-      const others = accountsOf(state, family).filter((other) => other.id !== accountId && isUsable(other, now));
+      const others = accountsOf(state, family).filter((other) => other.id !== accountId && isUsable(other, now, null, this.usage.get(other.id)));
       await withTimeout(Promise.allSettled(others.map((other) => this.refreshUsage(other.id, true))), 12_000);
       const next = roomyAccount(state, family, (id) => this.usage.get(id), lines, Date.now(), new Set([...this.reserved(state, agentId), accountId]));
       if (!next) return;
@@ -2146,6 +2147,10 @@ export class Service {
     let lock = this.redeemLocks.get(account.id);
     if (!lock) this.redeemLocks.set(account.id, (lock = new Mutex()));
     return lock.run(async () => {
+      // Recheck after taking the lock: a cap can be set while a failover waits to redeem.
+      if (automatic && this.atQuotaCeiling(await this.store.read(), account.id, Date.now(), null)) {
+        return { outcome: "unavailable", message: "The account has reached its configured quota maximum.", left: null };
+      }
       if (this.recentlyRedeemed(account.id)) {
         if (automatic) return { outcome: "reset", message: "A reset was just used on this account.", left: null };
         const minutes = Math.floor((Date.now() - (this.lastRedeemAt.get(account.id) ?? 0)) / 60_000);
@@ -2394,7 +2399,7 @@ export class Service {
     const now = Date.now();
     const model = this.agentModels.get(agentId);
     const routed = this.routeFor(state, agentId, family, exhausted, paid);
-    if (routed && routed.account.id !== exhausted && !routed.skipped && isUsable(routed.account, now, model)) return { account: routed.account, pin: false };
+    if (routed && routed.account.id !== exhausted && !routed.skipped && isUsable(routed.account, now, model, this.usage.get(routed.account.id))) return { account: routed.account, pin: false };
     const roomiest = mostAvailable(state, family, (id) => this.usage.get(id), now, new Set([...this.reserved(state, agentId), exhausted]), this.early, paid, this.pacing(now), model);
     return roomiest && { account: roomiest, pin: true };
   }
@@ -3581,6 +3586,11 @@ export class Service {
     return label && row.outcome === "switched" ? { ...row, to: label } : row;
   }
 
+  private atQuotaCeiling(state: StoredState, accountId: string | undefined, now: number, model?: string | null): boolean {
+    const account = findAccount(state, accountId);
+    return !!account && !!quotaCeilingHit(account, this.usage.get(account.id), now, model);
+  }
+
   /** The user was using the agent a moment ago: a turn started or ended, or they sent a message. */
   private recentlyActive(agent: AgentInfo, now: number): boolean {
     return now - Math.max(this.turnAt.get(agent.id) ?? 0, agent.lastMessageAt) < TURN_SETTLE_MS;
@@ -3597,7 +3607,7 @@ export class Service {
 
   /** The account can still take agents but is projected past the 5-hour gate. */
   private paced(account: StoredAccount | undefined, now: number): account is StoredAccount {
-    return !!account && canStandIn(account, now) &&
+    return !!account && canStandIn(account, now, null, this.usage.get(account.id)) &&
       paceScore(this.usage.get(account.id), this.pendingOn(account.id, now), now).gated;
   }
 
@@ -3674,7 +3684,8 @@ export class Service {
       return unchecked(error);
     }
     if (!latest || latest.archived || latest.status === "closed") return { outcome: "closed" };
-    if (busy(latest) || (unattended && hasBackgroundWork(latest)) || (background && this.recentlyActive(latest, Date.now()))) {
+    const now = Date.now();
+    if (busy(latest) || (unattended && hasBackgroundWork(latest)) || (background && this.recentlyActive(latest, now))) {
       return this.defer(agentId, row, unattended);
     }
     const reload: Reload = { opens: 0 };
@@ -3855,13 +3866,15 @@ export class Service {
         const family = familyOf(state, families, agent);
         // A reload can't move an agent of a family that isn't available here: its session opens on
         // the CLI login again (see `route`).
-        if (!family || this.availability.get(family)?.ok === false || routing.has(agentId) || this.switching.has(agentId) || this.recentlyActive(agent, now)) continue;
+        if (!family || this.availability.get(family)?.ok === false || routing.has(agentId) || this.switching.has(agentId)) continue;
+        const active = this.recentlyActive(agent, now);
         if (this.deferred.has(agentId)) {
           // Its switch waited for a turn that never came (it was only starting), or ended without it.
-          if (settled(agent.status)) waiting.push({ agentId, family });
+          if (!active && settled(agent.status)) waiting.push({ agentId, family });
           continue;
         }
         const current = this.runningOn(state, agentId, family);
+        if (active && !this.atQuotaCeiling(state, current, now, this.agentModels.get(agentId) ?? null)) continue;
         const target = this.targetFor(state, agentId, family, current);
         if (!current || !target || target === current) continue;
         // A reload cancels what the agent is doing, so nobody having asked, it only leaves an account
@@ -3932,7 +3945,7 @@ export class Service {
     // that is out too, so the agent would just be reopened where it can't work.
     const from = findAccount(state, current);
     const to = findAccount(state, target);
-    if (from && isPaidStandIn(from, this.prefs.paidApiFallback) && isLimited(from, now) && (!to || !isUsable(to, now, this.agentModels.get(agent.id)))) return false;
+    if (from && isPaidStandIn(from, this.prefs.paidApiFallback) && isLimited(from, now) && (!to || !isUsable(to, now, this.agentModels.get(agent.id), this.usage.get(to.id)))) return false;
     return stranded || (reason !== "manual" && reason !== "default");
   }
 
@@ -3942,7 +3955,7 @@ export class Service {
     if (!from) return "removed";
     if (!from.signedIn) return "signed_out";
     if (from.disabled) return "disabled";
-    if (isLimitedFor(from, now, this.agentModels.get(agentId))) return "limit";
+    if (isLimitedFor(from, now, this.agentModels.get(agentId), this.usage.get(from.id))) return "limit";
     if (this.leavesPaid(state, agentId, current, target, now)) return "room";
     return state.bindings[agentId]?.accountId === target ? "manual" : "default";
   }
@@ -3965,7 +3978,7 @@ export class Service {
     if (!from || !to) return false;
     if (isPaidStandIn(to, this.prefs.paidApiFallback) && this.routeOf(state, agentId, to.family)?.id !== to.id) return false;
     if (isPaidStandIn(from, this.prefs.paidApiFallback)) return true;
-    if (!isUsable(to, now, this.agentModels.get(agentId))) return false;
+    if (!isUsable(to, now, this.agentModels.get(agentId), this.usage.get(to.id))) return false;
     const session = state.sessions[agentId];
     const binding = state.bindings[agentId];
     return (session?.standIn === true && session.accountId === current) || (binding?.standIn === true && binding.accountId === current);
@@ -4046,6 +4059,9 @@ export class Service {
       this.usageLive.add(accountId);
       this.noteHistory(accountId, usage);
       const now = Date.now();
+      if (this.prefs.autoSwitch && this.paseo && quotaCeilingHit(account, usage, now)) {
+        void this.alignSessions(this.paseo).catch((error: unknown) => log("aligning agents failed", error));
+      }
       // With "Use ChatGPT credits when a limit is reached" on, credits keep an account going past a
       // full window, so a full window alone isn't a limit then.
       const creditsCover = this.prefs.useCredits && usage.credits != null;
@@ -4251,10 +4267,11 @@ export class Service {
     };
     // Pacing only chooses between two or more accounts that can take agents by themselves.
     const pacedFamilies = new Set(
-      FAMILIES.filter((family) => state.accounts.filter((other) => other.family === family && canStandIn(other, now)).length > 1),
+      FAMILIES.filter((family) => state.accounts.filter((other) => other.family === family && canStandIn(other, now, null, this.usage.get(other.id))).length > 1),
     );
     const accounts: AccountView[] = state.accounts.map((account) => {
-      const limited = isLimited(account, now);
+      const ceiling = quotaCeilingHit(account, this.usage.get(account.id), now, null);
+      const limited = isLimited(account, now) || !!ceiling;
       const proxy = proxies.get(account.id);
       return {
         id: account.id,
@@ -4268,7 +4285,9 @@ export class Service {
         disabled: account.disabled,
         isDefault: defaultAccount(state, account.family)?.id === account.id,
         nextAgentUntil: nextPickUntil(state, account.id, account.family, now),
-        limitedUntil: limited ? account.limitedUntil : null,
+        limitedUntil: isLimited(account, now) ? account.limitedUntil : ceiling?.resetsAt ?? null,
+        quotaCeilings: account.quotaCeilings,
+        ceilingHit: !!ceiling,
         usage: this.usage.get(account.id) ?? null,
         agentCount: counts.get(account.id) ?? 0,
         home: account.home,
@@ -4290,7 +4309,7 @@ export class Service {
         externalHome: external.has(account.id),
         sessionsShared: sessions.get(account.id) ?? null,
         moving: moving(account),
-        pace: this.prefs.balanceNewAgents && pacedFamilies.has(account.family) && canStandIn(account, now)
+        pace: this.prefs.balanceNewAgents && pacedFamilies.has(account.family) && canStandIn(account, now, null, this.usage.get(account.id))
           ? paceView(this.usage.get(account.id), this.pendingOn(account.id, now), now)
           : null,
         azure: azures.get(account.id) ?? null,
@@ -4536,8 +4555,15 @@ export class Service {
     }
     await this.store.update((draft) => {
       const target = findAccount(draft, accountId);
-      if (target) target.disabled = !enabled;
-      if (target && !enabled) dropNextPick(draft, target);
+      if (!target) return;
+      const peer = claudeLoginPeer(draft, target);
+      if (enabled && peer && !peer.disabled && !target.signedIn) {
+        throw new Error(`Sign in to ${target.label} before switching away from ${peer.label}.`);
+      }
+      target.disabled = !enabled;
+      delete target.pausedFor;
+      if (enabled && target.signedIn && peer) preferClaudeLogin(draft, target, peer);
+      if (!enabled) dropNextPick(draft, target);
     });
     console.log(`[ZeroSub] ${account.label} is ${enabled ? "enabled" : "disabled"}`);
     let stayed = 0;
@@ -4625,7 +4651,7 @@ export class Service {
         // Still starting, and not routed yet: it will be, by the new default.
         if (agent.status === "initializing" && !draft.sessions[agent.id]) continue;
         const current = findAccount(draft, this.runningOn(draft, agent.id, family));
-        if (!current || current.family !== family || !isUsable(current, now, this.agentModels.get(agent.id))) moving.push(agent.id);
+        if (!current || current.family !== family || !isUsable(current, now, this.agentModels.get(agent.id), this.usage.get(current.id))) moving.push(agent.id);
         else if (current.id !== newDefault) {
           // "auto", like a limit switch, so the account button still offers "Follow default". On a paid
           // stand-in it wasn't on by the old default, it's there only because every subscription was out:
@@ -4645,6 +4671,7 @@ export class Service {
 
   async clearLimit(accountId: string): Promise<void> {
     const state = await this.store.update((draft) => {
+      if (this.atQuotaCeiling(draft, accountId, Date.now(), null)) throw new Error("Raise the quota maximum before marking this account available.");
       const account = findAccount(draft, accountId);
       if (!account) return;
       for (const slot of [account, ...sameSubscription(draft, account)]) {
@@ -4680,6 +4707,7 @@ export class Service {
       if (isLimited(target, now)) throw new Error(limitedPick(target.label));
       // Only a limit of this agent's own model refuses it; another model's leaves the account open.
       const model = await this.modelOf(paseo, agentId);
+      if (this.atQuotaCeiling(state, target.id, now, model)) throw new Error(`${target.label} reached its quota maximum. Raise it in Accounts or pick another account.`);
       const scope = Object.entries(target.modelLimits).find(([name, limit]) => Date.parse(limit.until) > now && scopeCoversModel(name, model))?.[0];
       if (scope) throw new Error(limitedModelPick(target.label, scope));
     }
@@ -4750,6 +4778,21 @@ export class Service {
     return this.answerBy(replyBy, this.reconcile(paseo, "manual", [agentId], undefined, { summary }), summary);
   }
 
+  async setQuotaCeiling(accountId: string, windowId: string, percent: number): Promise<void> {
+    if (!this.usage.get(accountId)?.windows.some((window) => window.id === windowId)) {
+      throw new Error("That usage window is no longer available.");
+    }
+    await this.store.update((draft) => {
+      const account = findAccount(draft, accountId);
+      if (!account) throw new Error("That account no longer exists.");
+      const ceilings = { ...account.quotaCeilings };
+      if (percent === 100) delete ceilings[windowId];
+      else ceilings[windowId] = percent;
+      account.quotaCeilings = ceilings;
+    });
+    if (this.paseo) void this.alignSessions(this.paseo).catch((error: unknown) => log("aligning agents failed", error));
+  }
+
   async rename(accountId: string, label: string): Promise<void> {
     const state = await this.store.update((draft) => {
       const account = findAccount(draft, accountId);
@@ -4801,7 +4844,16 @@ export class Service {
     const kept = account.home !== null && !(await isOwnHome(account.home));
     const signsOut = kept && signOut && account.family !== "pi" && account.auth !== "api" && !(await reachesCliHome(account.home!));
     await this.store.update((draft) => {
+      const removed = findAccount(draft, accountId);
+      const peer = removed && claudeLoginPeer(draft, removed);
+      if (removed && peer?.kind === "main" && peer.signedIn && peer.disabled && peer.pausedFor === removed.id) {
+        peer.disabled = false;
+        preferClaudeLogin(draft, peer, removed);
+      }
       draft.accounts = draft.accounts.filter((entry) => entry.id !== accountId);
+      for (const entry of draft.accounts) {
+        if (entry.pausedFor === accountId) delete entry.pausedFor;
+      }
       if (account.home && (!kept || signsOut)) {
         draft.cleanup[account.home] = { family: account.family, accountId, why: "removed", at: new Date().toISOString(), ...(signsOut ? { signOutOnly: true } : {}) };
       }
@@ -5485,11 +5537,15 @@ export class Service {
       );
     }
     if (!identity.identity) throw new Error(`${shown} uses an API key or token, not a Claude subscription. Add it with "API key or token" instead.`);
+    const sharesCredentials = await sharesClaudeCliCredentials(home);
     let account: StoredAccount | undefined;
     await this.store.update((draft) => {
       if (draft.accounts.some((entry) => entry.home && resolve(entry.home) === home)) throw new Error(`${shown} is already added.`);
-      // The CLI's own login counts too: an added account must be one of its own.
-      const duplicate = accountsOf(draft, "claude").find((entry) => entry.identity === identity.identity);
+      const cli = mainAccount(draft, "claude");
+      if (sharesCredentials && cli?.auth === "subscription" && sameAccountIdentity("claude", cli, identity)) {
+        throw new Error(`${shown} shares the Claude CLI login's credentials. Use Add account → Claude sign-in for a separate sign-in.`);
+      }
+      const duplicate = managedLoginDuplicate(draft, "claude", identity);
       if (duplicate) throw new Error(`${identity.email ?? shown} is already added as "${duplicate.label}".`);
       // A folder of ZeroSub's own gets its ID back: a managed account's ID matches its folder's name there.
       const name = basename(home);
@@ -5497,6 +5553,7 @@ export class Service {
       account = newAccount({ id, family: "claude", kind: "managed", home });
       draft.accounts.push(account);
       applyIdentity(account, identity, draft);
+      enforceClaudeLoginPair(draft, account);
       // A removed account's folder that's back isn't cleaned up after all.
       for (const folder of Object.keys(draft.cleanup)) if (resolve(folder) === home) delete draft.cleanup[folder];
     });
@@ -6081,13 +6138,7 @@ export class Service {
           : `You signed in as ${identity.email ?? "a different account"}, but this is ${expected}. Sign in as ${expected}, or use Add account for the other one.`,
       );
     }
-    // The CLI's own login is whatever the user signs it into; only added accounts must be distinct.
-    const duplicate =
-      identity.identity && existing?.kind !== "main"
-        ? accountsOf(state, session.family).find(
-            (account) => account.id !== session.accountId && sameAccountIdentity(session.family, account, identity, true),
-          )
-        : undefined;
+    const duplicate = existing?.kind === "main" ? undefined : managedLoginDuplicate(state, session.family, identity, session.accountId);
     if (duplicate) {
       if (!existing && session.home) await adapter.logout(session.home).catch(() => undefined);
       return this.failLogin(
@@ -6110,6 +6161,9 @@ export class Service {
           removed = true;
           return;
         }
+        if (account?.kind !== "main" && managedLoginDuplicate(draft, session.family, identity, accountId)) {
+          throw new Error(`${identity.email ?? "That account"} was already added while you were signing in.`);
+        }
         if (!account) {
           // A managed account's ID matches its home's folder name, as its cleanup entry does.
           accountId = `${session.family}-${session.id}`;
@@ -6122,6 +6176,7 @@ export class Service {
         account.limitKind = null;
         account.modelLimits = {};
         handedOver = applyIdentity(account, identity, draft);
+        enforceClaudeLoginPair(draft, account);
       });
     } catch (error) {
       // A new account's home is then cleaned up as an unfinished sign-in, like any that failed.
@@ -6322,6 +6377,46 @@ function sameSubscription(state: StoredState, account: StoredAccount): StoredAcc
   return accountsOf(state, account.family).filter((other) => other.id !== account.id && sameAccountIdentity(account.family, other, account));
 }
 
+/** Claude allows one managed login beside its native CLI login. Other duplicates are still refused. */
+function managedLoginDuplicate(state: StoredState, family: Family, identity: Identity, except?: string | null): StoredAccount | undefined {
+  return accountsOf(state, family).find((other) =>
+    other.id !== except && (family !== "claude" || other.kind !== "main" || other.auth !== "subscription") &&
+    sameAccountIdentity(family, other, identity, true),
+  );
+}
+
+function claudeLoginPeer(state: StoredState, account: StoredAccount): StoredAccount | undefined {
+  if (account.family !== "claude" || account.auth !== "subscription") return undefined;
+  return sameSubscription(state, account).find((other) => other.kind !== account.kind && other.auth === "subscription");
+}
+
+/** The two logins share a subscription. Transfer routing and known limits without changing either sign-in. */
+function preferClaudeLogin(state: StoredState, account: StoredAccount, peer: StoredAccount): void {
+  delete account.pausedFor;
+  if (!peer.disabled) peer.pausedFor = account.id;
+  peer.disabled = true;
+  if (defaultAccount(state, "claude")?.id === peer.id) state.defaults.claude = account.id;
+  if (state.nextAgent.claude?.accountId === peer.id) state.nextAgent.claude.accountId = account.id;
+  for (const binding of Object.values(state.bindings)) {
+    if (binding.accountId === peer.id) binding.accountId = account.id;
+  }
+  const owned = new Set(state.projects.filter((rule) => rule.accountId === account.id).map((rule) => rule.projectId));
+  state.projects = state.projects.filter((rule) => rule.accountId !== peer.id || !owned.has(rule.projectId));
+  for (const rule of state.projects) {
+    if (rule.accountId === peer.id) rule.accountId = account.id;
+  }
+  const now = Date.now();
+  if (isLimited(peer, now) && !isLimited(account, now)) {
+    const { limitedUntil, limitKind, limitedAt, limitSource } = peer;
+    Object.assign(account, { limitedUntil, limitKind, limitedAt, limitSource });
+  }
+  for (const [scope, limit] of Object.entries(peer.modelLimits)) {
+    if (Date.parse(limit.until) > now && !(Date.parse(account.modelLimits[scope]?.until ?? "") >= Date.parse(limit.until))) {
+      account.modelLimits[scope] = limit;
+    }
+  }
+}
+
 /** Returns true when the CLI login's account was replaced by a different one, which drops what the slot knew of the old one's limit. */
 function applyIdentity(account: StoredAccount, identity: Identity, state: StoredState): boolean {
   const handedOver = account.kind === "main" && identity.signedIn && !!account.identity && !!identity.identity && !sameAccountIdentity(account.family, account, identity);
@@ -6346,6 +6441,13 @@ function applyIdentity(account: StoredAccount, identity: Identity, state: Stored
     }
   }
   return true;
+}
+
+function enforceClaudeLoginPair(state: StoredState, account: StoredAccount): void {
+  if (!account.signedIn || !account.identity || account.disabled) return;
+  const peer = claudeLoginPeer(state, account);
+  if (peer && account.kind === "managed") preferClaudeLogin(state, account, peer);
+  else if (peer?.signedIn && !peer.disabled) preferClaudeLogin(state, peer, account);
 }
 
 function applyIdentityFields(account: StoredAccount, identity: Identity, state: StoredState): void {

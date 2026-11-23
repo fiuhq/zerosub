@@ -1,4 +1,4 @@
-import { accountPeak } from "../shared/format";
+import { accountPeak, capsAccount, windowScope } from "../shared/format";
 import { isAzureAccount, isBedrockAccount, onAnthropicApi, PACE_GATE_PERCENT, WEEK_NEARLY_USED_PERCENT, type Family, type PaceView, type Usage, type UsageWindow } from "../shared/model";
 import { compareUpNext, isLongWindow, upNextRank } from "../shared/up-next";
 import { FIVE_HOUR_MINUTES, WEEK_MINUTES } from "./codex";
@@ -65,16 +65,27 @@ export function scopeCoversModel(scope: string, model: string | null | undefined
   return wanted.every((token) => have.has(token));
 }
 
+/** Omit model to check all windows, or pass null to check account-wide windows only. */
+export function quotaCeilingHit(account: StoredAccount, usage: Usage | null | undefined, now: number, model?: string | null): UsageWindow | undefined {
+  if (!account.quotaCeilings) return undefined;
+  return usage?.windows.find((window) => {
+    const ceiling = account.quotaCeilings?.[window.id];
+    return (model === undefined || capsAccount(window) || scopeCoversModel(windowScope(window), model)) &&
+      typeof ceiling === "number" && window.usedPercent >= ceiling &&
+      (!window.resetsAt || Date.parse(window.resetsAt) > now);
+  });
+}
+
 /** The account is at a limit of its own, or at the limit of a model window that covers `model`. */
-export function isLimitedFor(account: StoredAccount, now: number, model?: string | null): boolean {
-  if (isLimited(account, now)) return true;
+export function isLimitedFor(account: StoredAccount, now: number, model?: string | null, usage?: Usage | null): boolean {
+  if (isLimited(account, now) || quotaCeilingHit(account, usage, now, model ?? null)) return true;
   return Object.entries(account.modelLimits ?? {}).some(
     ([scope, limit]) => Date.parse(limit.until) > now && scopeCoversModel(scope, model),
   );
 }
 
-export function isUsable(account: StoredAccount, now: number, model?: string | null): boolean {
-  return account.signedIn && !account.disabled && !isLimitedFor(account, now, model);
+export function isUsable(account: StoredAccount, now: number, model?: string | null, usage?: Usage | null): boolean {
+  return account.signedIn && !account.disabled && !isLimitedFor(account, now, model, usage);
 }
 
 /**
@@ -82,8 +93,8 @@ export function isUsable(account: StoredAccount, now: number, model?: string | n
  * account is ever picked that way: an added one is an API key, and Pi's own login may be one too,
  * so moving work onto either would move it onto a bill nobody chose.
  */
-export function canStandIn(account: StoredAccount, now: number, model?: string | null): boolean {
-  return account.family !== "pi" && account.auth !== "api" && isUsable(account, now, model);
+export function canStandIn(account: StoredAccount, now: number, model?: string | null, usage?: Usage | null): boolean {
+  return account.family !== "pi" && account.auth !== "api" && isUsable(account, now, model, usage);
 }
 
 /**
@@ -278,9 +289,9 @@ export function mostAvailable(
 ): StoredAccount | undefined {
   const preferred = defaultAccount(state, family)?.id;
   const open = accountsOf(state, family).filter((account) => !exclude.has(account.id));
-  const subscriptions = open.filter((account) => canStandIn(account, now, model));
+  const subscriptions = open.filter((account) => canStandIn(account, now, model, usageOf(account.id)));
   const candidates =
-    subscriptions.length > 0 || !paidFallback ? subscriptions : open.filter((account) => isPaidStandIn(account, paidFallback) && isUsable(account, now, model));
+    subscriptions.length > 0 || !paidFallback ? subscriptions : open.filter((account) => isPaidStandIn(account, paidFallback) && isUsable(account, now, model, usageOf(account.id)));
   // Pacing (balanced new agents): readings lag behind the agents just placed, so each pending one counts
   // as used in Up next, and an account they would carry past the 5-hour gate, or whose week is nearly
   // used, goes behind every account they wouldn't. Fewer pending agents break a tie, so a burst of new
@@ -419,8 +430,9 @@ export function withBankedReset(
     .filter((account) => account.family !== "pi" && account.auth !== "api" && !isLastResort(account) &&
       !exclude.has(account.id) && account.signedIn && !account.disabled && account.limitKind === "window" && isLimited(account, now))
     .filter((account) => {
-      const resets = usageOf(account.id)?.resets;
-      return !!resets && resets.available > 0 && resets.usableNow;
+      const usage = usageOf(account.id);
+      const resets = usage?.resets;
+      return !quotaCeilingHit(account, usage, now, null) && !!resets && resets.available > 0 && resets.usableNow;
     })
     .sort((a, b) =>
       (a.id === preferred ? 0 : 1) - (b.id === preferred ? 0 : 1) ||
@@ -432,7 +444,7 @@ export function withBankedReset(
 /** Prefer a weekly reset within a day only when every usable account has fresh, complete usage. Accounts in `exclude` are never picked. */
 function soonestWeeklyReset(state: StoredState, family: Family, usageOf: RouteInput["usageOf"], now: number, exclude: ReadonlySet<string> = new Set()): StoredAccount | undefined {
   // An API account has no plan windows, and is never preferred for a reset coming up.
-  const candidates = accountsOf(state, family).filter((account) => isUsable(account, now) && account.auth !== "api" && !exclude.has(account.id));
+  const candidates = accountsOf(state, family).filter((account) => isUsable(account, now, null, usageOf(account.id)) && account.auth !== "api" && !exclude.has(account.id));
   const readings = candidates.map((account) => ({ account, usage: usageOf(account.id) }));
   const complete = readings.every(({ usage }) => {
     if (!usage || usage.error || usage.cached) return false;
@@ -555,7 +567,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   // A binding marked as a stand-in's is let go of the same way after the setting is turned off.
   if (
     account && binding?.source === "auto" && input.portable && (standIn(account) || binding.standIn === true) &&
-    (accounts.some((other) => canStandIn(other, input.now, input.model)) || (input.autoRedeem && withBankedReset(state, input.family, input.usageOf, input.now)))
+    (accounts.some((other) => canStandIn(other, input.now, input.model, input.usageOf(other.id))) || (input.autoRedeem && withBankedReset(state, input.family, input.usageOf, input.now)))
   ) {
     account = undefined;
   }
@@ -563,7 +575,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   // The account named for this very agent outranks the pick, which waits for an agent that names
   // none. One that can't take the agent is passed over, and the agent routes as usual.
   const takes = (candidate: StoredAccount | undefined): candidate is StoredAccount =>
-    candidate?.family === input.family && candidate.signedIn && !candidate.disabled && !(input.autoSwitch && isLimitedFor(candidate, input.now, input.model));
+    candidate?.family === input.family && candidate.signedIn && !candidate.disabled && !(input.autoSwitch && isLimitedFor(candidate, input.now, input.model, input.usageOf(candidate.id)));
   const requested = !account && fresh ? findAccount(state, input.requested) : undefined;
   if (takes(requested)) {
     account = requested;
@@ -613,7 +625,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
     // It keeps an agent on the shared account it already runs on, so shifting usage doesn't move it.
     if (account && !unrouted && reserved.has(account.id)) {
       const running = findAccount(state, state.sessions[input.agentId]?.accountId);
-      const stays = running && running.family === input.family && isUsable(running, input.now) && !reserved.has(running.id);
+      const stays = running && running.family === input.family && isUsable(running, input.now, input.model, input.usageOf(running.id)) && !reserved.has(running.id);
       account = (stays ? running : mostAvailable(state, input.family, input.usageOf, input.now, reserved, input.early)) ?? account;
     }
     // A thread that can't move is pinned to the account it first opened on.
@@ -622,15 +634,19 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   if (!account) return null;
 
   let skipped: RouteDecision["skipped"] = null;
-  const why = !account.signedIn ? "signed_out" : account.disabled ? "disabled" : isLimitedFor(account, input.now, input.model) ? "limited" : null;
+  const why = !account.signedIn ? "signed_out" : account.disabled ? "disabled" : isLimitedFor(account, input.now, input.model, input.usageOf(account.id)) ? "limited" : null;
   const mayMove = fresh || input.portable;
   if (why && mayMove && (input.autoSwitch || why !== "limited")) {
     const staying = findAccount(state, input.current);
     // A paid stand-in is only kept while no subscription account could take over from it.
     const keeps = (stand: StoredAccount) =>
       !standIn(stand) ||
-      !accountsOf(state, input.family).some((other) => other.id !== account!.id && !reserved.has(other.id) && canStandIn(other, input.now, input.model));
-    const stays = (stand: StoredAccount) => canStandIn(stand, input.now, input.model) || (standIn(stand) && isUsable(stand, input.now, input.model));
+      !accountsOf(state, input.family).some((other) => other.id !== account!.id && !reserved.has(other.id) && canStandIn(other, input.now, input.model, input.usageOf(other.id)));
+    const stays = (stand: StoredAccount) => {
+      const usage = input.usageOf(stand.id);
+      return canStandIn(stand, input.now, input.model, usage) ||
+        (standIn(stand) && isUsable(stand, input.now, input.model, usage));
+    };
     let alternative =
       staying && staying.family === input.family && staying.id !== account.id && stays(staying) && !reserved.has(staying.id) && keeps(staying)
         ? staying

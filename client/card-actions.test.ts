@@ -24,6 +24,11 @@ describe("an account card's buttons", () => {
     for (const account of [claude, pi, { ...claude, family: "codex" as const, kind: "main" as const }]) expect(cardActions(account)).toContain("projects");
   });
 
+  it("only offers Mark as available when the quota ceiling allows it", () => {
+    expect(cardActions({ ...claude, status: "limited" })).toContain("clear");
+    expect(cardActions({ ...claude, status: "limited", ceilingHit: true })).not.toContain("clear");
+  });
+
   it("offers Disable on an account another one can stand in for", () => {
     expect(cardActions(claude)).toContain("toggle");
     expect(cardActions({ ...claude, family: "codex" })).toContain("toggle");

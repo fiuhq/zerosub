@@ -257,7 +257,7 @@ function standingOf(state: StateView, agent: TrackedAgent, inComposer: boolean):
   // A banked reset is worth offering right where the agent stopped, even with a single account. A
   // signed-out account can't spend one (the server refuses), though its usage still lists them.
   const resets = current.usage?.resets ?? null;
-  const offerReset = resets !== null && current.status !== "signed_out" && (current.status === "limited" || resets.usableNow);
+  const offerReset = !current.ceilingHit && resets !== null && current.status !== "signed_out" && (current.status === "limited" || resets.usableNow);
   // With no account of this provider left to move the work to, it can carry on with another provider
   // (Pi has none): the first, in fallback order, with an account the server would pick for it. Either
   // way an API account counts only when API accounts may stand in: otherwise the server never moves
