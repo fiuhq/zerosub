@@ -479,6 +479,12 @@ export interface RouteInput {
   usageOf(accountId: string): Usage | null | undefined;
   /** Switch early: keep brand-new agents off nearly full accounts. Null when it's off. */
   early?: EarlyLines | null;
+  /**
+   * Whether a session really opens now (Paseo's session_open), rather than routing working out where
+   * an agent belongs (alignment, a reconcile, the account button). Only a real open moves an existing
+   * conversation off a nearly full account: a prediction that did would reload idle agents unasked.
+   */
+  opening?: boolean;
   /** The Paseo project of the agent's workspace, when known. */
   projectId?: string | null;
   /**
@@ -676,7 +682,7 @@ export function chooseAccount(state: StoredState, input: RouteInput): RouteDecis
   // again (a resume, a reload): the turn-end check never saw an account fill up while the agent sat
   // idle, and its next turn would run that account to its limit. An account chosen for this agent is
   // left alone.
-  const opensAgain = !fresh && input.portable && binding?.source !== "user";
+  const opensAgain = !fresh && input.opening === true && input.portable && binding?.source !== "user";
   if (!skipped && (fresh ? !bound : opensAgain) && bind?.source !== "user" && input.autoSwitch && input.early && nearlyFull(input.usageOf(account.id), input.early, input.now).length > 0) {
     const roomy = roomyAccount(state, input.family, input.usageOf, input.early, input.now, new Set([...reserved, account.id]));
     if (roomy) {

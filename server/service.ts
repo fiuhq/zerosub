@@ -1244,6 +1244,7 @@ export class Service {
       portable: adapter.portable,
       usageOf: (id) => this.usage.get(id),
       early: this.early,
+      opening: true,
       // Alignment and the account button decide with the same stand-in rule, so a reopen lands where they expect.
       current: request.reason === "create" ? undefined : this.standingIn(state, request.agentId, family, request.reason === "refresh"),
       requested: request.reason === "create" ? requestedAccount(request) : undefined,
