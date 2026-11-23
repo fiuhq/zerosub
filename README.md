@@ -9,7 +9,7 @@ Use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot, OpenCode Go, Gro
 - **Pick an account per agent.** An account button in the message box shows which account each Claude or Codex agent uses. Tap it to switch. On Paseo 0.16 and later there is also an **Account** control in the message box itself, there before the first message too, so you can pick the account a new agent starts on.
 - **Automatic failover.** When an account hits its 5-hour or weekly limit, the agent moves to the top of **Up next**, the list on the Accounts screen that puts the account whose spare quota resets soonest first, and carries on. New agents skip exhausted accounts. A limit of one model's own window (Claude's **Weekly · Fable** or **Weekly · Opus**, say) only keeps agents on that model off the account: agents on other models keep using it.
 - **Accounts per project.** Pick the Paseo projects whose agents use an account (work projects on the work account, say). Agents in other projects stay off it.
-- **Switch early.** An agent whose turn ends on a nearly full account moves to one with room before its next turn, so it doesn't stop halfway through a task. New agents skip nearly full accounts too.
+- **Switch early.** An agent whose turn ends on a nearly full account moves to one with room before its next turn, so it doesn't stop halfway through a task. New agents, and agents that open again (a resume or reload), skip nearly full accounts too.
 - **Live usage.** Each account shows its own 5-hour and weekly usage and when they reset, plus any ChatGPT credits or Claude extra usage. Accounts in use refresh about every minute and after each turn, and a limit shows up the moment it hits.
 - **Banked resets.** If a provider has banked limit resets on an account, you can use one from the account card or the agent's account button.
 - **Set an account aside.** Disable an account for a while and its agents move to your other accounts, then come back when you enable it again.
@@ -75,6 +75,7 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - It only moves onto an account at least 10 points below every line. A move costs the conversation its prompt cache on the new account, and the margin keeps agents from bouncing between two accounts that are both nearly full. When no account has that much room, the agent stays and the limit failover above takes over.
    - It acts only on a live reading from the last 10 minutes, never a cached or failed one, and leaves a window that refills in the next 10 minutes alone.
    - New agents that would follow the default onto a nearly full account start on one with room instead, and stay there.
+   - An agent that opens again (a resume, a reload) on a nearly full account moves to one with room the same way: it may have sat idle while other agents filled the account up, which the check at the end of its last turn couldn't see.
    - It leaves an account you chose for an agent alone until that account really runs out. ChatGPT conversations with history can't change accounts, so only new ChatGPT agents are affected.
 
 ### Choose accounts for new agents
