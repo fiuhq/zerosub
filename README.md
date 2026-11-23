@@ -458,7 +458,7 @@ Code layout:
 - `client/`: React Native UI (Accounts surface, sign-in modal, composer pill, commands, timeline note).
 - `server/`: routing, account homes, Claude, Codex, Kimi Code, Copilot, OpenCode Go, Grok, Cursor and Pi adapters, failover, Pi account folders and scripts.
 - `shared/`: RPC contracts and the view model.
-- `bin/zerosub-claude`: runs `claude` on the account ZeroSub would give a new agent, for tools Paseo doesn't launch. Each launch is noted in `~/.paseo/zerosub/launches.jsonl`, so a burst of launches spreads over the accounts as new agents do (each counts against its account for 10 minutes), and ZeroSub reads a launched-on account's usage every minute, as it does an account its own agents are busy on.
+- `bin/zerosub-claude`: runs `claude` on the account ZeroSub would give a new agent, for tools Paseo doesn't launch. Each launch is noted in `$PASEO_HOME/zerosub/launches.jsonl`, so a burst of launches, even ones started at the same moment, spreads over the accounts as new agents do (each counts against its account for 10 minutes), and ZeroSub reads a launched-on account's usage every minute for 30 minutes after the launch, as it does an account its own agents are busy on.
 
 Report problems at [github.com/kapybara-org/ZeroSub/issues](https://github.com/kapybara-org/ZeroSub/issues).
 
