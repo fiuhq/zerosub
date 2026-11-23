@@ -126,12 +126,48 @@ describe("new agents", () => {
     expect(route({ [MAIN]: reading(85, 40), [SPARE]: reading(20, 30) }, { bindings })?.account.id).toBe(MAIN);
   });
 
-  it("don't move a resumed agent: that's the turn-end check's job", () => {
-    const decision = chooseAccount(
-      { ...emptyState(), accounts: [account(MAIN, "main"), account(SPARE)] },
-      { agentId: AGENT, family: "claude", reason: "resume", now: NOW, autoSwitch: true, balanceNewAgents: false, portable: true, usageOf: (id) => ({ [MAIN]: reading(85, 40), [SPARE]: reading(20, 30) })[id], early: LINES },
+});
+
+// The turn-end check only sees agents whose turn ends on the account. One that sat idle while others
+// filled its account up would otherwise start its next turn there and run it to the limit.
+describe("agents opening again", () => {
+  const usage = { [MAIN]: reading(85, 40), [SPARE]: reading(20, 30) };
+  const route = (
+    source: "balance" | "auto" | "user" | null,
+    patch: { reason?: "resume" | "refresh" | "import"; portable?: boolean; levels?: Record<string, Usage> } = {},
+  ) =>
+    chooseAccount(
+      {
+        ...emptyState(),
+        accounts: [account(MAIN, "main"), account(SPARE)],
+        bindings: source ? { [AGENT]: { accountId: MAIN, source, at: new Date(NOW - 86_400_000).toISOString() } } : {},
+      },
+      { agentId: AGENT, family: "claude", reason: patch.reason ?? "resume", now: NOW, autoSwitch: true, balanceNewAgents: true, portable: patch.portable ?? true, usageOf: (id) => (patch.levels ?? usage)[id], early: LINES },
     );
-    expect(decision?.account.id).toBe(MAIN);
+
+  it.each(["balance", "auto", null] as const)("leave a nearly full account they're on (%s), and stay where they land", (source) => {
+    for (const reason of ["resume", "refresh", "import"] as const) {
+      const decision = route(source, { reason });
+      expect(decision?.account.id).toBe(SPARE);
+      expect(decision?.skipped).toMatchObject({ account: { id: MAIN }, why: "nearly_full" });
+      expect(decision?.bind).toMatchObject({ accountId: SPARE, source: "auto" });
+    }
+  });
+
+  it("keep an account chosen for them", () => {
+    expect(route("user")?.account.id).toBe(MAIN);
+  });
+
+  it("stay when no other account has room to spare", () => {
+    expect(route("balance", { levels: { [MAIN]: reading(85, 40), [SPARE]: reading(75, 30) } })?.account.id).toBe(MAIN);
+  });
+
+  it("stay on an account under its line", () => {
+    expect(route("balance", { levels: { [MAIN]: reading(60, 40), [SPARE]: reading(20, 30) } })?.skipped).toBeNull();
+  });
+
+  it("stay when their conversation can't change accounts", () => {
+    expect(route("balance", { portable: false })?.account.id).toBe(MAIN);
   });
 });
 
