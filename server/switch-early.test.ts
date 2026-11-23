@@ -280,6 +280,23 @@ describe("agents the launcher started outside Paseo", () => {
     for (let i = 0; i < 4; i += 1) await noteLaunch(MAIN, Date.now());
     expect(await open("fresh-2")).toBe(SPARE);
   });
+
+  it("keep their account's usage read every minute while a gate step may still run", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval"] });
+    vi.setSystemTime(NOW);
+    const { service, reads } = await setUp({ [MAIN]: [10, 10], [SPARE]: [10, 10] });
+    try {
+      // A review step started on SPARE 20 minutes ago and may still be running; SPARE isn't the default.
+      mkdirSync(join(root, "zerosub"), { recursive: true });
+      await noteLaunch(SPARE, NOW - 20 * 60_000);
+      vi.setSystemTime(NOW + 61_000);
+      await service.start();
+      await vi.waitFor(() => expect(reads).toContain(SPARE));
+    } finally {
+      await service.stop();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("an agent opening again on a nearly full account", () => {

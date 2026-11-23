@@ -10,6 +10,13 @@ import { dataDir } from "./paths";
  */
 export const launchesPath = (): string => join(dataDir(), "launches.jsonl");
 
+/**
+ * How long after a launch its account counts as busy, so its usage is read every minute: a gate
+ * agent's step can run about 15 minutes and be tried once more. Pacing counts a launch for
+ * `PENDING_MS` only, until a reading can show it.
+ */
+export const LAUNCH_BUSY_MS = 30 * 60_000;
+
 /** Past this size the log starts over beside its old copy. */
 export const LAUNCH_LOG_MAX_BYTES = 1_000_000;
 

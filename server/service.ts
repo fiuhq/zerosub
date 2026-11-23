@@ -102,7 +102,7 @@ import { maskProxy, normalizeProxy } from "./proxy";
 import { Reopener, hostCanReload } from "./reopen";
 import { SwitchGuard } from "./switch-guard";
 import { loadReadings, mergeUsage, pastReset, saveReadings, showLimit } from "./usage";
-import { launchesSince } from "./launches";
+import { LAUNCH_BUSY_MS, launchesSince } from "./launches";
 import { canStandIn, chooseAccount, fiveHourWindow, headroomScore, isLastResort, isLimited, isLimitedFor, isPaidStandIn, isUsable, mostAvailable, nearlyFull, paceScore, paceView, PENDING_MS, quotaCeilingHit, reservedElsewhere, roomyAccount, scopeCoversModel, weeklyWindow, withBankedReset, type EarlyLines, type Pacing, type RouteDecision, type RouteInput } from "./routing";
 import { BurnTracker, turnHorizon } from "./burn";
 import {
@@ -730,11 +730,12 @@ export class Service {
     const lines = this.early;
     const pressed = new Set(lines ? state.accounts.filter((account) => nearlyFull(this.usage.get(account.id), lines, now).length > 0).map((account) => account.family) : []);
     this.launched = await launchesSince(now - PENDING_MS);
+    const launchedLately = await launchesSince(now - LAUNCH_BUSY_MS);
     for (const account of state.accounts) {
       // One still on record (both folders there, say) waits: its folder isn't settled.
       if (state.moves[account.id]) continue;
       const attempted = this.usageAttemptAt.get(account.id) ?? 0;
-      const busy = now - (this.activeAt.get(account.id) ?? 0) < ACTIVE_WINDOW_MS || this.launched.has(account.id);
+      const busy = now - (this.activeAt.get(account.id) ?? 0) < ACTIVE_WINDOW_MS || launchedLately.has(account.id);
       const isDefault = defaultAccount(state, account.family)?.id === account.id;
       const every = account.disabled
         ? USAGE_IDLE_MS

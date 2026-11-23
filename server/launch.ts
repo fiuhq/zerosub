@@ -104,9 +104,12 @@ async function main(): Promise<void> {
   const now = Date.now();
   const chosen = launchAccount(state, await loadReadings(), await readPreferences(), family, now, await launchesSince(now - PENDING_MS));
   if (!chosen) throw new Error("zerosub launch: ZeroSub has no Claude account to route to");
+  // Noted at once, before any wait, so a launch right behind this one sees it. Only a pacing hint for
+  // the next launches: one that can't be noted still launches, and says so.
+  // ponytail: launches within the same few milliseconds can still both pick one account; a lock around
+  // read, choose and note would close that, if bursts ever land that tightly.
+  await noteLaunch(chosen.id, now).catch((error: unknown) => console.error(`[ZeroSub] could not note the launch on ${chosen.label}:`, error));
   const account = await settledAccount(state, chosen.id, read);
-  // Only a pacing hint for the next launches: one that can't be noted still launches, and says so.
-  await noteLaunch(account.id, now).catch((error: unknown) => console.error(`[ZeroSub] could not note the launch on ${account.label}:`, error));
   // Said on stderr so the caller's log names the account; stdout is only the env to apply.
   console.error(`[ZeroSub] launch → ${account.label}`);
   console.log(shellExports(await new ClaudeAdapter().env(account.home)));
