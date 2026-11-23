@@ -11,6 +11,7 @@ import {
   listProjects,
   removeAccount,
   renameAccount,
+  setQuotaCeiling,
   setAccountEnabled,
   setAccountProjects,
   setAccountSessionsShared,
@@ -747,7 +748,22 @@ function AccountCard({
               .join(" · ")}
           </Text>
         ) : windows.length > 0 ? (
-          windows.map((limit) => <UsageBar key={limit.id} theme={theme} limit={limit} />)
+          windows.map((limit) => (
+            <UsageBar
+              key={limit.id}
+              theme={theme}
+              limit={limit}
+              ceiling={account.quotaCeilings?.[limit.id] ?? 100}
+              onCeiling={async (percent) => {
+                try {
+                  await store.rpc(setQuotaCeiling, { accountId: account.id, windowId: limit.id, percent });
+                  await store.refresh();
+                } catch (error) {
+                  toast.error(describe(error));
+                }
+              }}
+            />
+          ))
         ) : (
           <Text style={text.small}>{account.usage?.error ?? summary ?? "Checking usage…"}</Text>
         )}
@@ -826,7 +842,7 @@ function AccountCard({
             busy={busy === "toggle"}
             onPress={() => void toggle()}
           />
-        ) : resets ? (
+        ) : resets && !account.ceilingHit ? (
           <Button
             theme={theme}
             size="small"
