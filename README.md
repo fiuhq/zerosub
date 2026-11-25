@@ -414,7 +414,7 @@ ZeroSub never implements OAuth itself and never copies credentials between accou
 - An Azure OpenAI account's key is in its home's `azure.json` only (see [Azure OpenAI accounts](#azure-openai-accounts)), and is sent nowhere but its endpoint.
 - An AWS Bedrock account's access key, if it has one, is in its home's `bedrock.json` only (see [AWS Bedrock accounts](#aws-bedrock-accounts)), and is handed only to its own sessions and the `aws` command that checks it. The region the Bedrock form fills in is looked up when it opens, never at startup.
 - An account that still has ChatGPT conversations on it can't be removed until you archive them or continue them elsewhere, because they can't move. Grok and Cursor conversations can only be archived.
-- Your CLI login can't be removed from ZeroSub. To use the same Claude subscription in a separate folder, add it under Claude or import its separately signed-in folder. ZeroSub pauses the matching CLI entry and moves its routing to the added account. Enabling either entry in ZeroSub pauses the other. Removing the added account restores the CLI entry and its routing if ZeroSub paused it for that account and it is still signed in to the same subscription.
+- Your CLI login can't be removed from ZeroSub. To use the same Claude, ChatGPT, Cursor, or Grok subscription in a separate folder, use **Add account** under that provider and sign in again. Claude can also import a separately signed-in folder. ZeroSub pauses the matching CLI entry. When that entry was the default, new agents use the added account. Existing ChatGPT, Cursor, and Grok conversations keep their original sign-in. Enabling either entry pauses the other. Removing the added account restores the CLI entry and its routing if ZeroSub paused it for that account and it is still signed in to the same subscription.
 
 ## Limitations
 
@@ -470,3 +470,9 @@ Remove added accounts from **Accounts** first, so they're signed out. Then run:
 paseo plugin remove zerosub
 rm -rf ~/.paseo/zerosub
 ```
+
+## Antigravity accounts
+
+On Linux, ZeroSub works with Paseo's built-in Antigravity provider and `agy` 1.5 or later. The CLI login uses the same environment as Paseo. To add an isolated sign-in, choose **Antigravity → Add account**, open Google's sign-in page, then paste the code it returns.
+
+Each added account runs `agy` with a private home directory and its own file-backed sign-in. Tools launched by that agent inherit the account's home. Select an account or make it the default for new agents. Existing conversations stay with their original home. When the same personal Google sign-in is identified in both entries, ZeroSub pauses one for new agents, as it does for Claude. For an existing pair, make the entry you want the default. Desktop identity detection uses Linux Secret Service via `secret-tool` (provided by `libsecret-tools` on Debian and Ubuntu). ZeroSub shows the quota buckets from `agy /usage` for reference.

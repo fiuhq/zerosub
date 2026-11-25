@@ -7,7 +7,7 @@ describe("families", () => {
     for (const table of [FAMILY_LABEL, FAMILY_HEADING, FAMILY_CLI, FAMILY_PORTABLE, FAMILY_SIGN_IN]) {
       expect(Object.keys(table).sort()).toEqual([...FAMILIES].sort());
     }
-    expect([...FALLBACK_ORDER].sort()).toEqual(FAMILIES.filter((family) => family !== "pi" && family !== "grok" && family !== "cursor").sort());
+    expect([...FALLBACK_ORDER].sort()).toEqual(FAMILIES.filter((family) => family !== "pi" && family !== "grok" && family !== "cursor" && family !== "antigravity").sort());
   });
 
   it("fall back to every other family, most preferred first", () => {
@@ -19,10 +19,11 @@ describe("families", () => {
     expect(fallbackFamilies("pi")).toEqual([]);
     expect(fallbackFamilies("grok")).toEqual([]);
     expect(fallbackFamilies("cursor")).toEqual([]);
+    expect(fallbackFamilies("antigravity")).toEqual([]);
   });
 
   it("keep the CLI login ids and read the older two-family defaults", () => {
-    expect(MAIN_ACCOUNT_ID).toEqual({ claude: "claude-main", codex: "codex-main", kimi: "kimi-main", copilot: "copilot-main", opencode: "opencode-main", pi: "pi-main", grok: "grok-main", cursor: "cursor-main" });
+    expect(MAIN_ACCOUNT_ID).toEqual({ claude: "claude-main", codex: "codex-main", kimi: "kimi-main", copilot: "copilot-main", opencode: "opencode-main", pi: "pi-main", grok: "grok-main", cursor: "cursor-main", antigravity: "antigravity-main" });
     const { state, dropped } = salvageState({ version: 1, defaults: { claude: "claude-a", codex: null } });
     expect(dropped).toBe(false);
     expect(state.defaults).toEqual({ claude: "claude-a", codex: null });
