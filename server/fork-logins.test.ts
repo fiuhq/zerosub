@@ -219,6 +219,26 @@ it.each([
   expect(fake.calls).not.toContain("logout null");
 });
 
+it.each(["kimi", "copilot", "opencode"] as const)("refuses a second sign-in to the %s subscription its CLI already uses", async (family) => {
+  const identity = `${family}|new@example.com`;
+  const cli = { ...main, id: MAIN_ACCOUNT_ID[family], family, signedIn: true, email: "new@example.com", identity };
+  await seed({ accounts: [cli] as never });
+  const { service, store, fake } = start({ ...newFake(), mainSignedIn: true, identityKey: identity }, family);
+  const paseo = fakePaseo({}, family);
+  const login = await service.startLogin(family, "code");
+  fake.signedIn.add(join(homes(), `${family}-${login.id}`));
+  fake.finish({ ok: true, message: null });
+  const result = await vi.waitFor(async () => {
+    const entry = (await service.view(paseo)).logins.find((item) => item.id === login.id);
+    expect(entry?.step).toBe("failed");
+    return entry;
+  });
+  expect(result?.message).toContain("already added");
+  const state = await store.read();
+  expect(state.accounts.map((account) => account.id)).toEqual([cli.id]);
+  expect(state.accounts[0]).toMatchObject({ disabled: false, signedIn: true });
+});
+
 it("pairs existing Antigravity entries when the user selects a new default", async () => {
   const family = "antigravity";
   const identity = "antigravity|new@example.com";

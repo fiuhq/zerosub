@@ -49,9 +49,10 @@ const OWN_AUTH_KEYS: Record<Family, readonly string[]> = {
     "GROK_OIDC_SCOPES",
     "GROK_CLI_CHAT_PROXY_BASE_URL",
   ],
+  // A home of the entry's own, or a Gemini key or Google credentials: any of them means it isn't the usual Antigravity login.
+  antigravity: ["HOME", "USERPROFILE", ...ANTIGRAVITY_AUTH_ENV],
   // An API key or session token (cursor-agent saves either as its login), another endpoint, or a
   // login or settings folder of the entry's own: any of them means it isn't the usual Cursor login.
-  antigravity: ["HOME", "USERPROFILE", ...ANTIGRAVITY_AUTH_ENV],
   cursor: [
     "CURSOR_API_KEY",
     "CURSOR_AUTH_TOKEN",

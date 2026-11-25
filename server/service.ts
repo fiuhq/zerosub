@@ -6393,9 +6393,16 @@ function sameSubscription(state: StoredState, account: StoredAccount): StoredAcc
   return accountsOf(state, account.family).filter((other) => other.id !== account.id && sameAccountIdentity(account.family, other, account));
 }
 
+/**
+ * Families whose second login of the same subscription is kept apart beside the CLI login. The fork's
+ * Kimi Code, Copilot and OpenCode Go aren't among them: signing in again to the subscription their CLI
+ * already uses is refused as a duplicate, as before.
+ */
+const PAIRABLE_FAMILIES: ReadonlySet<Family> = new Set<Family>(["claude", "codex", "grok", "cursor", "antigravity"]);
+
 /** Pair Codex logins only when both the workspace and its member are known. */
 function canPairSubscription(family: Family, account: StoredAccount, login: Pick<Identity, "identity" | "email">): boolean {
-  if (family === "pi" || account.auth !== "subscription") return false;
+  if (!PAIRABLE_FAMILIES.has(family) || account.auth !== "subscription") return false;
   if (family === "codex" && (!account.email || !login.email || withoutWorkspace(account.identity) || withoutWorkspace(login.identity))) return false;
   return sameAccountIdentity(family, account, login);
 }
