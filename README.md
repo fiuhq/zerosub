@@ -1,6 +1,6 @@
 # ZeroSub
 
-Use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot, OpenCode Go, Grok and Cursor subscriptions side by side in [Paseo](https://paseo.sh), without logging in and out of the CLI, and run Paseo's Pi agents on several Anthropic API keys, each with its own proxy.
+Use several Claude, ChatGPT (Codex), Kimi Code, GitHub Copilot, OpenCode Go, Grok, Cursor and Antigravity subscriptions side by side in [Paseo](https://paseo.sh), without logging in and out of the CLI, and run Paseo's Pi agents on several Anthropic API keys, each with its own proxy.
 
 ![ZeroSub accounts dashboard showing Claude and ChatGPT (Codex) accounts, usage bars, and Automatic switching toggles](https://raw.githubusercontent.com/kapybara-org/zerosub/main/images/dashboard.png)
 
@@ -456,7 +456,7 @@ paseo plugin logs zerosub
 Code layout:
 
 - `client/`: React Native UI (Accounts surface, sign-in modal, composer pill, commands, timeline note).
-- `server/`: routing, account homes, Claude, Codex, Kimi Code, Copilot, OpenCode Go, Grok, Cursor and Pi adapters, failover, Pi account folders and scripts.
+- `server/`: routing, account homes, Claude, Codex, Kimi Code, Copilot, OpenCode Go, Grok, Cursor, Antigravity and Pi adapters, failover, Pi account folders and scripts.
 - `shared/`: RPC contracts and the view model.
 - `bin/zerosub-claude`: runs `claude` on the account ZeroSub would give a new agent, for tools Paseo doesn't launch. Each launch is noted in `$PASEO_HOME/zerosub/launches.jsonl`, so a burst of launches, even ones started at the same moment, spreads over the accounts as new agents do (each counts against its account for 10 minutes), and ZeroSub reads a launched-on account's usage every minute for 30 minutes after the launch, as it does an account its own agents are busy on.
 
