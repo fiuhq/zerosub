@@ -42,7 +42,7 @@ export function AddAccountModal({
   // Phones start with a code; the browser stays on offer for someone at the host's computer.
   const mobile = layout.platform === "ios" || layout.platform === "android";
   const hostBrowser = state?.browserSignIn !== false;
-  const [method, setMethod] = useState<LoginMethod>(hostBrowser && !mobile ? "browser" : "code");
+  const [method, setMethod] = useState<LoginMethod>(family !== "antigravity" && hostBrowser && !mobile ? "browser" : "code");
   const [loginId, setLoginId] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   // A new Claude account can get a proxy of its own first, so the sign-in itself goes through it.

@@ -543,7 +543,7 @@ function AccountCard({
     toggle: {
       key: "toggle",
       icon: disabled ? "CirclePlay" : "CirclePause",
-      label: disabled ? "Enable account" : "Disable for now (agents won't use it)",
+      label: disabled ? "Enable account" : "Disable for now",
       tooltip: disabled ? "Enable: agents can use this account again" : "Disable for now: agents stop using it and move to your other accounts",
       busy: busy === "toggle",
       onPress: () => void toggle(),
@@ -754,7 +754,7 @@ function AccountCard({
               theme={theme}
               limit={limit}
               ceiling={account.quotaCeilings?.[limit.id] ?? 100}
-              onCeiling={async (percent) => {
+              onCeiling={account.family === "antigravity" ? undefined : async (percent) => {
                 try {
                   await store.rpc(setQuotaCeiling, { accountId: account.id, windowId: limit.id, percent });
                   await store.refresh();
@@ -803,7 +803,7 @@ function AccountCard({
         }}
       >
         <Text style={[text.small, { flexShrink: 1 }]} numberOfLines={1}>
-          {disabled ? "Disabled · agents won't use it" : freshness ? `${agents} · ${freshness}` : agents}
+          {disabled ? "Disabled for new agents" : freshness ? `${agents} · ${freshness}` : agents}
         </Text>
         {signedOut ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

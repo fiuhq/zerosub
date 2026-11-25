@@ -1,11 +1,11 @@
 import { z } from "zod";
 
 /**
- * The provider families this plugin manages, one adapter each: the subscription CLIs (Grok Build's and
- * Cursor's included), and Pi, whose added accounts are Anthropic API keys. Custom provider profiles map onto
- * one of them. Adding a family means a value here, a row in each table below, and its adapter.
+ * The provider families this plugin manages, one adapter each: the subscription CLIs (Grok Build's,
+ * Cursor's and Antigravity's included), and Pi, whose added accounts are Anthropic API keys. Custom provider
+ * profiles map onto one of them. Adding a family means a value here, a row in each table below, and its adapter.
  */
-export const FamilySchema = z.enum(["claude", "codex", "kimi", "copilot", "opencode", "pi", "grok", "cursor"]);
+export const FamilySchema = z.enum(["claude", "codex", "kimi", "copilot", "opencode", "pi", "grok", "cursor", "antigravity"]);
 export type Family = z.infer<typeof FamilySchema>;
 export const FAMILIES: readonly Family[] = FamilySchema.options;
 
@@ -19,6 +19,7 @@ export const FAMILY_LABEL: Record<Family, string> = {
   pi: "Pi",
   grok: "Grok",
   cursor: "Cursor",
+  antigravity: "Antigravity",
 };
 
 /** Section headings on the Accounts screen. */
@@ -31,6 +32,7 @@ export const FAMILY_HEADING: Record<Family, string> = {
   pi: "Pi",
   grok: "Grok",
   cursor: "Cursor",
+  antigravity: "Antigravity",
 };
 
 /** The CLI that signs in and runs the agents. */
@@ -43,6 +45,7 @@ export const FAMILY_CLI: Record<Family, string> = {
   pi: "Pi",
   grok: "Grok",
   cursor: "Cursor",
+  antigravity: "Antigravity",
 };
 
 /** Paseo's OpenCode harness provider. It runs on the host itself, so a fork to it uses no account. */
@@ -50,8 +53,8 @@ export const OPENCODE_PROVIDER = "opencode";
 export const OPENCODE_LABEL = "OpenCode";
 /**
  * Whether a conversation can move to another account of its provider in place. ChatGPT encrypts its
- * reasoning per account, so a Codex thread with history carries on in a new agent instead; a Grok or
- * Cursor one stays on its account (see `HAND_OFF`).
+ * reasoning per account, so a Codex thread with history carries on in a new agent instead; a Grok,
+ * Cursor or Antigravity one stays on its account (see `HAND_OFF`).
  */
 export const FAMILY_PORTABLE: Record<Family, boolean> = {
   claude: true,
@@ -62,15 +65,16 @@ export const FAMILY_PORTABLE: Record<Family, boolean> = {
   pi: true,
   grok: false,
   cursor: false,
+  antigravity: false,
 };
 
 /**
  * How signing in works. `paste`: one link finishes by itself on the host and another shows a code to
- * paste back, both from the same flow. `switchable`: a browser callback or a device code typed on the
- * provider's page, each its own flow, so switching method starts a new one. `device`: only a device
- * code typed on the provider's page, from any device. `link`: one link, opened on any device; the CLI
- * asks the provider whether it was used. Pi's added accounts are API keys, added from their own form
- * (see `AddPiAccountModal`), so its entry is never used to sign in.
+ * paste back, both from the same flow (Antigravity offers only the code link). `switchable`: a browser
+ * callback or a device code typed on the provider's page, each its own flow, so switching method starts a
+ * new one. `device`: only a device code typed on the provider's page, from any device. `link`: one link,
+ * opened on any device; the CLI asks the provider whether it was used. Pi's added accounts are API keys,
+ * added from their own form (see `AddPiAccountModal`), so its entry is never used to sign in.
  */
 export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable" | "device" | "link"> = {
   claude: "paste",
@@ -81,13 +85,14 @@ export const FAMILY_SIGN_IN: Record<Family, "paste" | "switchable" | "device" | 
   pi: "paste",
   grok: "switchable",
   cursor: "link",
+  antigravity: "paste",
 };
 
 /**
  * Providers a stopped chat can carry on with when every account of its own is out, most preferred
  * first. The first that is installed and has a usable account takes over in a new agent. Pi isn't
- * one: its added accounts are billed per use and never take work over by themselves. Nor are Grok and
- * Cursor, whose chats don't fork to another provider.
+ * one: its added accounts are billed per use and never take work over by themselves. Nor are Grok,
+ * Cursor and Antigravity, whose chats don't fork to another provider.
  */
 export const FALLBACK_ORDER: readonly Family[] = ["claude", "codex", "kimi", "copilot", "opencode"];
 
@@ -97,7 +102,7 @@ export function familyPhrase(families: readonly Family[] = FALLBACK_ORDER, joine
   return labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} ${joiner} ${labels.at(-1)}`;
 }
 
-/** The providers a `from` agent can carry on with, most preferred first; none for Pi, Grok or Cursor. */
+/** The providers a `from` agent can carry on with, most preferred first; none for Pi, Grok, Cursor or Antigravity. */
 export function fallbackFamilies(from: Family): Family[] {
   return FALLBACK_ORDER.includes(from) ? FALLBACK_ORDER.filter((family) => family !== from) : [];
 }
@@ -116,6 +121,7 @@ export const OPTIONAL: Record<Family, boolean> = {
   pi: true,
   grok: true,
   cursor: true,
+  antigravity: true,
 };
 
 /** The families the Accounts screen shows, given the accounts there are (the CLI logins registered included). */
@@ -125,7 +131,7 @@ export function shownFamilies(accounts: readonly { family: Family }[]): Family[]
 
 /**
  * For a provider whose conversations can't change accounts in place: one with history carries on in a
- * new agent on the account picked for it (Codex's). False for Grok's and Cursor's, which stay on their
+ * new agent on the account picked for it (Codex's). False for Grok, Cursor and Antigravity, which stay on their
  * account until moving them is known to work; only new agents follow a pick or the default.
  */
 export const HAND_OFF: Record<Family, boolean> = {
@@ -137,6 +143,7 @@ export const HAND_OFF: Record<Family, boolean> = {
   pi: true,
   grok: false,
   cursor: false,
+  antigravity: false,
 };
 
 /** Stands for a proxy's password (or a user name with none) wherever the proxy is shown. */

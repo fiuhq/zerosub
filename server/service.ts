@@ -4180,7 +4180,7 @@ export class Service {
       // Renewing a sign-in can take longer than Paseo waits for an answer; later readings show at the next poll.
       await settles(Promise.allSettled(accounts.map(async (account) => {
         await this.refreshUsage(account.id, true, true);
-        if (account.family === "claude") await this.refreshIdentity(account.id, true);
+        if (account.family === "claude" || account.family === "antigravity") await this.refreshIdentity(account.id, true);
       })), USAGE_REPLY_MS);
     }
     void this.prune(paseo).catch(() => undefined);
@@ -4512,6 +4512,10 @@ export class Service {
       await this.store.update((draft) => {
         previous = draft.defaults[account.family] ?? null;
         draft.defaults[account.family] = account.id;
+        // Explicitly choosing an Antigravity default can pair entries added before identity was available.
+        const target = account.family === "antigravity" ? findAccount(draft, account.id) : undefined;
+        const peer = target && subscriptionLoginPeer(draft, target);
+        if (target?.signedIn && !target.disabled && peer?.signedIn) preferSubscriptionLogin(draft, target, peer, portable);
       });
       if (portable && !this.prefs.moveAgentsOnDefaultChange) {
         // The new default is for what comes next: open agents stay on the account they run on. If they
@@ -4564,13 +4568,13 @@ export class Service {
     await this.store.update((draft) => {
       const target = findAccount(draft, accountId);
       if (!target) return;
-      const peer = claudeLoginPeer(draft, target);
+      const peer = subscriptionLoginPeer(draft, target);
       if (enabled && peer && !peer.disabled && !target.signedIn) {
         throw new Error(`Sign in to ${target.label} before switching away from ${peer.label}.`);
       }
       target.disabled = !enabled;
       delete target.pausedFor;
-      if (enabled && target.signedIn && peer) preferClaudeLogin(draft, target, peer);
+      if (enabled && target.signedIn && peer) preferSubscriptionLogin(draft, target, peer, this.adapters[target.family].portable);
       if (!enabled) dropNextPick(draft, target);
     });
     console.log(`[ZeroSub] ${account.label} is ${enabled ? "enabled" : "disabled"}`);
@@ -4793,6 +4797,7 @@ export class Service {
     await this.store.update((draft) => {
       const account = findAccount(draft, accountId);
       if (!account) throw new Error("That account no longer exists.");
+      if (account.family === "antigravity") throw new Error("Antigravity usage is display-only.");
       const ceilings = { ...account.quotaCeilings };
       if (percent === 100) delete ceilings[windowId];
       else ceilings[windowId] = percent;
@@ -4821,7 +4826,7 @@ export class Service {
     const account = findAccount(state, accountId);
     if (!account) throw new Error("That account no longer exists.");
     if (account.kind === "main") {
-      throw new Error("Your CLI login can't be removed here. Sign out with `claude auth logout`, `codex logout`, `grok logout`, `cursor-agent logout` or Pi's /logout instead.");
+      throw new Error("Your CLI login can't be removed here. Sign out with `claude auth logout`, `codex logout`, `grok logout`, `cursor-agent logout`, Antigravity's /logout, or Pi's /logout instead.");
     }
     if (!this.adapters[account.family].portable) {
       // These conversations can't move to another ChatGPT account, so removing theirs would strand them.
@@ -4853,10 +4858,10 @@ export class Service {
     const signsOut = kept && signOut && account.family !== "pi" && account.auth !== "api" && !(await reachesCliHome(account.home!));
     await this.store.update((draft) => {
       const removed = findAccount(draft, accountId);
-      const peer = removed && claudeLoginPeer(draft, removed);
+      const peer = removed && subscriptionLoginPeer(draft, removed);
       if (removed && peer?.kind === "main" && peer.signedIn && peer.disabled && peer.pausedFor === removed.id) {
         peer.disabled = false;
-        preferClaudeLogin(draft, peer, removed);
+        preferSubscriptionLogin(draft, peer, removed, this.adapters[peer.family].portable);
       }
       draft.accounts = draft.accounts.filter((entry) => entry.id !== accountId);
       for (const entry of draft.accounts) {
@@ -5561,7 +5566,7 @@ export class Service {
       account = newAccount({ id, family: "claude", kind: "managed", home });
       draft.accounts.push(account);
       applyIdentity(account, identity, draft);
-      enforceClaudeLoginPair(draft, account);
+      enforceSubscriptionLoginPair(draft, account, this.adapters.claude.portable);
       // A removed account's folder that's back isn't cleaned up after all.
       for (const folder of Object.keys(draft.cleanup)) if (resolve(folder) === home) delete draft.cleanup[folder];
     });
@@ -6146,7 +6151,10 @@ export class Service {
           : `You signed in as ${identity.email ?? "a different account"}, but this is ${expected}. Sign in as ${expected}, or use Add account for the other one.`,
       );
     }
-    const duplicate = existing?.kind === "main" ? undefined : managedLoginDuplicate(state, session.family, identity, session.accountId);
+    const refreshCli = session.family === "antigravity" && existing?.kind !== "main";
+    if (refreshCli) await this.refreshIdentity(MAIN_ACCOUNT_ID.antigravity);
+    const duplicate = existing?.kind === "main" ? undefined :
+      managedLoginDuplicate(refreshCli ? await this.store.read() : state, session.family, identity, session.accountId);
     if (duplicate) {
       if (!existing && session.home) await adapter.logout(session.home).catch(() => undefined);
       return this.failLogin(
@@ -6184,7 +6192,7 @@ export class Service {
         account.limitKind = null;
         account.modelLimits = {};
         handedOver = applyIdentity(account, identity, draft);
-        enforceClaudeLoginPair(draft, account);
+        enforceSubscriptionLoginPair(draft, account, this.adapters[account.family].portable);
       });
     } catch (error) {
       // A new account's home is then cleaned up as an unfinished sign-in, like any that failed.
@@ -6385,28 +6393,55 @@ function sameSubscription(state: StoredState, account: StoredAccount): StoredAcc
   return accountsOf(state, account.family).filter((other) => other.id !== account.id && sameAccountIdentity(account.family, other, account));
 }
 
-/** Claude allows one managed login beside its native CLI login. Other duplicates are still refused. */
+/**
+ * Families whose second login of the same subscription is kept apart beside the CLI login. The fork's
+ * Kimi Code, Copilot and OpenCode Go aren't among them: signing in again to the subscription their CLI
+ * already uses is refused as a duplicate, as before.
+ */
+const PAIRABLE_FAMILIES: ReadonlySet<Family> = new Set<Family>(["claude", "codex", "grok", "cursor", "antigravity"]);
+
+/** Pair Codex logins only when both the workspace and its member are known. */
+function canPairSubscription(family: Family, account: StoredAccount, login: Pick<Identity, "identity" | "email">): boolean {
+  if (!PAIRABLE_FAMILIES.has(family) || account.auth !== "subscription") return false;
+  if (family === "codex" && (!account.email || !login.email || withoutWorkspace(account.identity) || withoutWorkspace(login.identity))) return false;
+  return sameAccountIdentity(family, account, login);
+}
+
+/** Allow one subscription login beside the CLI login while still rejecting managed duplicates. */
 function managedLoginDuplicate(state: StoredState, family: Family, identity: Identity, except?: string | null): StoredAccount | undefined {
   return accountsOf(state, family).find((other) =>
-    other.id !== except && (family !== "claude" || other.kind !== "main" || other.auth !== "subscription") &&
+    other.id !== except && (other.kind !== "main" || !canPairSubscription(family, other, identity)) &&
     sameAccountIdentity(family, other, identity, true),
   );
 }
 
-function claudeLoginPeer(state: StoredState, account: StoredAccount): StoredAccount | undefined {
-  if (account.family !== "claude" || account.auth !== "subscription") return undefined;
-  return sameSubscription(state, account).find((other) => other.kind !== account.kind && other.auth === "subscription");
+function subscriptionLoginPeer(state: StoredState, account: StoredAccount): StoredAccount | undefined {
+  if (account.auth !== "subscription") return undefined;
+  return accountsOf(state, account.family).find((other) =>
+    other.kind !== account.kind && other.auth === "subscription" && canPairSubscription(account.family, other, account),
+  );
 }
 
 /** The two logins share a subscription. Transfer routing and known limits without changing either sign-in. */
-function preferClaudeLogin(state: StoredState, account: StoredAccount, peer: StoredAccount): void {
+function preferSubscriptionLogin(state: StoredState, account: StoredAccount, peer: StoredAccount, portable: boolean): void {
   delete account.pausedFor;
   if (!peer.disabled) peer.pausedFor = account.id;
   peer.disabled = true;
-  if (defaultAccount(state, "claude")?.id === peer.id) state.defaults.claude = account.id;
-  if (state.nextAgent.claude?.accountId === peer.id) state.nextAgent.claude.accountId = account.id;
-  for (const binding of Object.values(state.bindings)) {
-    if (binding.accountId === peer.id) binding.accountId = account.id;
+  const { family } = account;
+  if (defaultAccount(state, family)?.id === peer.id) state.defaults[family] = account.id;
+  const next = state.nextAgent[family];
+  if (next?.accountId === peer.id) next.accountId = account.id;
+  if (portable) {
+    for (const binding of Object.values(state.bindings)) {
+      if (binding.accountId === peer.id) binding.accountId = account.id;
+    }
+  } else {
+    // Older sessions may have a home on record without a binding.
+    for (const [agentId, session] of Object.entries(state.sessions)) {
+      if (session.family === family && !state.bindings[agentId]) {
+        state.bindings[agentId] = { accountId: session.accountId, source: "thread", at: session.openedAt };
+      }
+    }
   }
   const owned = new Set(state.projects.filter((rule) => rule.accountId === account.id).map((rule) => rule.projectId));
   state.projects = state.projects.filter((rule) => rule.accountId !== peer.id || !owned.has(rule.projectId));
@@ -6451,11 +6486,11 @@ function applyIdentity(account: StoredAccount, identity: Identity, state: Stored
   return true;
 }
 
-function enforceClaudeLoginPair(state: StoredState, account: StoredAccount): void {
+function enforceSubscriptionLoginPair(state: StoredState, account: StoredAccount, portable: boolean): void {
   if (!account.signedIn || !account.identity || account.disabled) return;
-  const peer = claudeLoginPeer(state, account);
-  if (peer && account.kind === "managed") preferClaudeLogin(state, account, peer);
-  else if (peer?.signedIn && !peer.disabled) preferClaudeLogin(state, peer, account);
+  const peer = subscriptionLoginPeer(state, account);
+  if (peer && account.kind === "managed") preferSubscriptionLogin(state, account, peer, portable);
+  else if (peer?.signedIn && !peer.disabled) preferSubscriptionLogin(state, peer, account, portable);
 }
 
 function applyIdentityFields(account: StoredAccount, identity: Identity, state: StoredState): void {
@@ -6466,10 +6501,10 @@ function applyIdentityFields(account: StoredAccount, identity: Identity, state: 
   }
   // A key read without its workspace says less than the one stored for the same person, which stays.
   const vaguer = withoutWorkspace(identity.identity) && !withoutWorkspace(account.identity) && sameAccountIdentity(account.family, account, identity);
-  account.email = identity.email ?? account.email;
+  account.email = account.family === "antigravity" ? identity.email : identity.email ?? account.email;
   account.plan = identity.plan ?? account.plan;
   account.organization = identity.organization ?? account.organization;
-  if (!vaguer) account.identity = identity.identity ?? account.identity;
+  if (!vaguer) account.identity = account.family === "antigravity" ? identity.identity : identity.identity ?? account.identity;
   // An identity without an email (Pi's) has nothing better to call an account that has a name.
   if ((account.autoLabel && (identity.email || !account.label)) || !account.label) {
     account.label = suggestLabel(account, state);
