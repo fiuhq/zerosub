@@ -198,7 +198,8 @@ export function paceScore(usage: Usage | null | undefined, pending: number, now:
   const fetched = Number.isFinite(parsed) ? Math.min(parsed, now) : now;
   const expired = (window: UsageWindow) => !!window.resetsAt && Date.parse(window.resetsAt) <= now;
 
-  let fiveHour = fiveCharge;
+  // No 5-hour window (Ultra has no 5-hour limit): pending agents can't carry the account to a wall it doesn't have.
+  let fiveHour = short ? fiveCharge : 0;
   if (short && Number.isFinite(short.usedPercent) && !expired(short)) {
     const reset = Date.parse(short.resetsAt ?? "");
     if (!Number.isFinite(reset)) fiveHour = short.usedPercent + fiveCharge;
@@ -244,7 +245,7 @@ export function paceView(usage: Usage | null | undefined, pending: number, now: 
   return {
     fiveHourUsed: used(short),
     fiveHourProjected: pace.fiveHour,
-    pendingFiveHour: PENDING_FIVE_HOUR_PERCENT * pending,
+    pendingFiveHour: !short && long ? 0 : PENDING_FIVE_HOUR_PERCENT * pending,
     weeklyUsed: used(long),
     pendingWeekly: PENDING_WEEKLY_PERCENT * pending,
     weekElapsed,
@@ -269,9 +270,10 @@ function withPending(usage: Usage | null | undefined, pending: number): Usage | 
  * The usable account first in Up next, preferring the default, then the CLI login, on ties. Up next
  * puts an account at its short (5-hour) switch line, 80% by default, behind every account under it,
  * as `fiveHourGated` does, and one with a full window that caps it last. With `pacing` (balanced new
- * agents), an account its pending agents would carry past the 5-hour gate (`paceScore`), or one that
- * has used `WEEK_NEARLY_USED_PERCENT` of its week, goes behind every account that hasn't, before Up
- * next orders each group; a full window that caps an account still ranks it last, gate or not.
+ * agents), an account its pending agents would carry past the 5-hour gate (`paceScore`) goes behind
+ * every account that isn't, lowest 5-hour projection first, and one that has used
+ * `WEEK_NEARLY_USED_PERCENT` of its week goes behind those; Up next orders each group, and a full
+ * window that caps an account still ranks it last, gate or not.
  *
  * With `paidFallback` (the `paidApiFallback` preference), a usable paid API account (`isPaidStandIn`)
  * is chosen once no subscription account can stand in; without it, never.
@@ -300,13 +302,18 @@ export function mostAvailable(
   const ranks = new Map(
     candidates.map((account) => [account.id, upNextRank(withPending(usageOf(account.id), pendingOf(account)), now, lines ?? undefined)]),
   );
+  const paces = new Map(candidates.map((account) => [account.id, pacing ? paceScore(usageOf(account.id), pendingOf(account), now) : undefined]));
   const tier = new Map(
     candidates.map((account) => {
-      const usage = usageOf(account.id);
-      const pace = pacing ? paceScore(usage, pendingOf(account), now) : undefined;
-      return [account.id, headroomScore(usage, now) >= 100 ? 2 : pace && (pace.gated || pace.weekHeld) ? 1 : 0];
+      const pace = paces.get(account.id);
+      return [account.id, headroomScore(usageOf(account.id), now) >= 100 ? 3 : pace?.weekHeld ? 2 : pace?.gated ? 1 : 0];
     }),
   );
+  // Among accounts held back on the 5-hour projection, the one its projected burn keeps furthest from the
+  // 5-hour wall goes first: raw used + pending ignores how fast an account is burning. A weekly-held account
+  // goes after them: a 5-hour hold recovers within hours, a spent week locks the account out for days.
+  const heldOrder = (a: StoredAccount, b: StoredAccount) =>
+    tier.get(a.id) === 1 && tier.get(b.id) === 1 ? paces.get(a.id)!.fiveHour - paces.get(b.id)!.fiveHour : 0;
   const rank = (account: StoredAccount) => [
     pendingOf(account),
     account.id === preferred ? 0 : 1,
@@ -314,7 +321,7 @@ export function mostAvailable(
     Date.parse(account.createdAt) || 0,
   ];
   candidates.sort((a, b) => {
-    const order = tier.get(a.id)! - tier.get(b.id)! || compareUpNext(ranks.get(a.id)!, ranks.get(b.id)!);
+    const order = tier.get(a.id)! - tier.get(b.id)! || heldOrder(a, b) || compareUpNext(ranks.get(a.id)!, ranks.get(b.id)!);
     if (order !== 0) return order;
     const left = rank(a);
     const right = rank(b);
