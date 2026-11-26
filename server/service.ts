@@ -91,7 +91,7 @@ import { codexHandoffMode, encryptedResumeFailure, sameWorkspace, turnFailedText
 import { CodexContinuations, MESSAGE_PREFIX, UnresolvableEpochError, fitInstructions, matchesTransfer, readUpdates, ready, sentDigestOf, snapshot, transferMarker, waitForCreated, waitForSource, type Agent } from "./continuations";
 import { CONTINUED_FROM_LABEL, PARENT_LABEL, buildTranscript, continueInNewAgent, continuationPrompt, promptInstruction, updatePrompt, type Continuation } from "./handoff";
 import { launcherDir, launcherNames, piLauncherDir, writeLaunchers, type LauncherAccount, type LauncherKind } from "./launchers";
-import { PI_ACCOUNT_FILE, codexSessionsShared, prepareClaudeHome, crossesInheritedProxy, isAccountHome, moveHome, normalizeBaseUrl, plainHttp, readPiAccount, readPiAccountForAgents, removeHome, sentInTheClear } from "./homes";
+import { PI_ACCOUNT_FILE, codexSessionsShared, prepareClaudeHome, crossesInheritedProxy, isAccountHome, moveHome, normalizeBaseUrl, plainHttp, readPiAccount, readPiAccountForAgents, removeHome, sentInTheClear, setShareMcpSignIns } from "./homes";
 import { Mutex } from "./json-file";
 import { detectAzureLimit, detectAzureSignOut, detectBedrockAutoModeRefusal, detectBedrockLimit, detectBedrockModelUnavailable, detectBedrockRefusal, turnRows } from "./limits";
 import { canSignInWithBrowser } from "./machine";
@@ -213,6 +213,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   switchEarlyAt: 80,
   switchEarlyWeeklyAt: 95,
   balanceNewAgents: true,
+  shareMcpSignIns: false,
   showComposerPill: true,
   keepComposerPill: true,
   autoRedeem: false,
@@ -641,6 +642,7 @@ export class Service {
   setPreferences(prefs: Preferences): void {
     const routingChanged = prefs.autoSwitch !== this.prefs.autoSwitch || prefs.paidApiFallback !== this.prefs.paidApiFallback;
     this.prefs = prefs;
+    setShareMcpSignIns(prefs.shareMcpSignIns);
     // Whether limited accounts are skipped, and paid API accounts may stand in, decides where agents
     // belong: move them now, not at the next upkeep.
     if (routingChanged && this.paseo) void this.alignSessions(this.paseo).catch((error: unknown) => log("aligning agents failed", error));
@@ -4327,6 +4329,7 @@ export class Service {
     });
 
     return {
+      version: 1 as const,
       accounts,
       agents: routes,
       logins: [...this.logins.values()].map((login) => login.view),

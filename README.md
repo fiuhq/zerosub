@@ -50,7 +50,7 @@ Then open **Accounts (ZeroSub)** in the sidebar.
    - **Make default** (a button on the account's card): agents that follow the default use it. New agents start at the top of Up next while **Spread new agents across accounts** is on (the default), and on the default when it's off. Open Claude agents switch right away, busy ones after their turn.
      - To leave open agents where they are, turn off **Move open agents when the default changes** (in Accounts, or **Settings → Plugins → zerosub → ZeroSub preferences**). Each open agent that follows the default then stays pinned to the account it's using, even after it reopens, unless that account is signed out, disabled or at its limit. Agents that aren't open at the time, and new agents when **Spread new agents across accounts** is off, use the new default.
      - A kept agent still switches when its account hits a limit. To move it to the new default, choose **Follow default** from its account button, or type `/account default`.
-   - **The account button in an agent's message box**: moves that one agent. While a move is under way it names both accounts, for example `personal → work`: the agent still runs on the first until its session reopens, and the button's tooltip says when that happens (once it's idle, when its turn ends, once background work it left running stops, or when its session next starts). If the reload doesn't work, the button says why and the agent's timeline notes it.
+   - **The account button in an agent's message box**: moves that one agent. Its tooltip, and on a phone the heading of its menu, start with the provider and the account, for example `Claude account: work`, so a Claude and a ChatGPT account with the same name can't be mistaken for each other. While a move is under way it names both accounts, for example `personal → work`: the agent still runs on the first until its session reopens, and the button's tooltip says when that happens (once it's idle, when its turn ends, once background work it left running stops, or when its session next starts). If the reload doesn't work, the button says why and the agent's timeline notes it.
    - With automatic switching on, an account at its limit can't be picked for an agent: the agent would only move straight off it again. Pick another one, or press **Mark as available again** on the account's card if it has room. An account at the limit of one model's window (such as **Weekly · Fable**) is refused only for agents on that model, with a message saying so; agents on other models can pick it.
    - **`/account work`** in the message box, or `/account default` to follow the default again.
    - **⌘K → "Make … the default"**.
@@ -86,7 +86,7 @@ With **Automatic switching** on too, ZeroSub also moves Claude agents that have 
 
 ### The Account control in the message box
 
-On Paseo 0.16 and later, the message box of an agent that doesn't exist yet has an **Account** control: in a new agent's tab and on the New workspace screen. Both the app and the host need Paseo 0.16: the choice travels in the new agent's metadata, which an older host doesn't take, so with one the control isn't shown. Like the account button, it shows once the provider has more than one account, and the account button's preference turns it off too.
+On Paseo 0.16 and later, the message box of an agent that doesn't exist yet has an **Account** control, named for the agent's provider (**Claude account**, **ChatGPT account** and so on): in a new agent's tab and on the New workspace screen. Both the app and the host need Paseo 0.16: the choice travels in the new agent's metadata, which an older host doesn't take, so with one the control isn't shown. Like the account button, it shows once the provider has more than one account, and the account button's preference turns it off too.
 
 - The first choice names no account, and says where the agent starts then: on the default, on the account picked for the next new agent, or, as **Automatic**, at the top of Up next (with **Spread new agents across accounts** on, or when the default can't take a new agent).
 - Any other choice starts this one agent on that account and keeps it there, as if you had picked it from the agent's account button. It outranks spreading and the next-new-agent pick, which waits for an agent that names no account.
@@ -131,6 +131,18 @@ These still open a new tab:
 That last failure puts the agent back on the previous account, in the same write as its continuation record, and opens today's continuation tab.
 
 On 2026-11-15, my fork continued one conversation from member A to member B of the same workspace on macOS 27.0.1 with Codex 0.167.0. That hop was a workspace credit limit, which this option still opens in a new tab. The run did not cover a second workspace or an email-only identity.
+
+### Share MCP sign-ins between Claude accounts (optional)
+
+Off by default. Claude Code keeps MCP servers' OAuth sign-ins (Linear, Notion, …) per Claude account, so an agent moved to another account finds those servers asking for a sign-in again. Turn on **Share MCP sign-ins between Claude accounts** and a server you sign in to on one Claude account works on the others too. Leave it off when your accounts sign in to the same server as different people (a work Linear on one, a personal one on another): with it on, they'd all end up with whichever sign-in is newest.
+
+- Claude Code keeps these sign-ins in `.credentials.json`, under `mcpOAuth`, beside the account's own sign-in. Every 30 seconds ZeroSub copies each server's entry between your CLI login and each added Claude account, whichever way it's newer: it holds a token and the other doesn't, or both have an expiry and it expires later. So a sign-in or a token refresh on any account reaches the others within a minute. A token saved without an expiry (the server didn't give one) only goes to accounts that have no token for that server.
+- It writes under Claude Code's own lock on that file (`.storage-write.lock`), reading the file again under it, and changes only `mcpOAuth`. The account's own Claude sign-in is never copied or changed, and an account that isn't signed in gets no `.credentials.json`.
+- A server it just brought in is dropped from that account's `mcp-needs-auth-cache.json`, so a new session uses it at once. A session already open may need `/mcp` to reconnect.
+- Signing out of a server on one account signs every account out of it. Claude Code revokes the tokens with the server, and they're the same tokens on every account; sign in again on any account and the new sign-in reaches the others. Signing in to a server again on one account revokes the old tokens too, so the other accounts can't use the server until the new sign-in reaches them.
+- Accounts holding the same token tend to refresh it together, near its expiry. With a server that replaces its refresh token on every refresh, one of them can be left with a spent token and need `/mcp` again; a server that treats a reused refresh token as stolen may sign every account out of it.
+- Turned off, nothing more is copied, and sign-ins already copied stay where they are.
+- Not on macOS, where Claude Code keeps these sign-ins in each account's Keychain entry, nor on Windows where it uses Credential Manager: only a `.credentials.json` file is read or written.
 
 ### Kimi Code
 
@@ -398,7 +410,7 @@ Sign-in runs the official CLIs:
 - Grok: `grok login --oauth`, or `grok login --device-auth` for the code.
 - Cursor: `cursor-agent login`.
 
-ZeroSub never implements OAuth itself and never copies credentials between accounts.
+ZeroSub never implements OAuth itself and never copies an account's own sign-in to another. The one thing it can carry between accounts, if you turn it on, is MCP servers' OAuth sign-ins (see [Share MCP sign-ins between Claude accounts](#share-mcp-sign-ins-between-claude-accounts-optional)).
 
 ## Privacy and security
 
@@ -418,7 +430,7 @@ ZeroSub never implements OAuth itself and never copies credentials between accou
 
 ## Limitations
 
-- **MCP servers that use OAuth** (Linear, Notion, …) store their tokens per Claude account, so sign in to them once on each account.
+- **MCP servers that use OAuth** (Linear, Notion, …) store their tokens per Claude account, so sign in to them once on each account, unless you turn on [Share MCP sign-ins between Claude accounts](#share-mcp-sign-ins-between-claude-accounts-optional) (not on macOS).
 - **A long Keychain sign-in keeps an added Claude account's folder where it is (macOS).** Added Claude accounts move out of ZeroSub's `homes/` into `~/.claude-config` (or the folder picked under the Claude accounts) with their Keychain entry, which ZeroSub copies through `security -i`'s standard input so the sign-in never shows in the process list. `security -i` takes about 4,000 characters a line, and the sign-in goes on it as hex, so an entry over about 1.9 KB can't be copied that way; Claude Code's records of MCP servers' sign-ins (`mcpOAuth`) can make it that long. Such an account keeps its folder and works as before, and its card says why. ZeroSub looks at the entry again every 30 minutes, and moves the folder once it fits.
 - **Shared settings apply to every account.** If `~/.claude/settings.json` sets an `apiKeyHelper` or API-key `env`, every account uses that key instead of its subscription. Likewise, an `[auth]` command, customer SSO (`[grok_com_config.oidc]`) or a model's own `api_key` in `~/.grok/config.toml` signs every Grok account in the same way.
 - **A Grok sign-in set in the daemon's environment** (`GROK_AUTH_PROVIDER_COMMAND`, or `GROK_OIDC_ISSUER` and `GROK_OIDC_CLIENT_ID`) is used by your CLI login only. ZeroSub clears it for added Grok accounts, so one that can only sign in that way may fail to sign in or stay signed in; ZeroSub shows a warning when it's set.
@@ -435,6 +447,59 @@ ZeroSub never implements OAuth itself and never copies credentials between accou
 - **Agents in background workspaces** (`paseo workspace create --background`) are left out of the list of agents Paseo gives plugins, so they have no account button: switch one with `/account` in its message box. Each still opens on the account it's routed to, switches when a turn hits a limit and moves off an account you remove, but changing the default, disabling an account and the 30-second check don't move it.
 - **ChatGPT device-code sign-in** has to be enabled in ChatGPT → Settings → Security. The browser option works from a browser on the host's own computer.
 - Tested on macOS with Claude Code 2.1.280, Codex 0.156.1 and Paseo 0.9.1; Grok accounts are built against Grok 1.0.77 and Paseo 0.15.4 on Linux, Cursor accounts against cursor-agent 2026.11.13 and Paseo 0.15.4 on Linux. Linux should work. Windows is untested.
+
+## Plugin contracts
+
+### The `zerosub.state` RPC (read-only)
+
+Call `zerosub.state` on the `zerosub` plugin to read its account and routing state. The response carries `version: 1` as defined by `StateViewSchema`. ZeroSub 1.30.0 and earlier omit `version`. Treat a missing `version` as `1`. Set `refreshUsage` to request a fresh usage reading and pass `accountId` to limit the refresh to one account. [StateViewSchema](shared/model.ts)
+
+Each `accounts[]` entry exposes these stable fields.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Stable account ID, such as `claude-main`. |
+| `family` | Provider family, such as `claude` or `codex`. |
+| `status` | The server reports `ready`, `signed_out`, `limited` or `disabled`. A signed-out account reports `signed_out` even when disabled. A provider limit or a quota ceiling can make an account `limited`. |
+| `limitedUntil` | ISO 8601 timestamp when the limit lifts, or `null` when there is no known limit end. |
+| `usage` | Latest reading, or `null` when unavailable. Each `usage.windows[]` entry has an `id` (a stable key such as `five_hour`), a display `label`, `usedPercent` (100 means full), and `resetsAt` (an ISO 8601 timestamp or `null` when unknown). |
+
+Each `agents[]` entry exposes these stable fields.
+
+| Field | Meaning |
+| --- | --- |
+| `agentId` | Paseo agent ID. |
+| `accountId` | ID of the account the agent is routed to. During a pending move this is already the destination. |
+| `pinned` | True for an account choice recorded for this agent, including a user pick or an automatic switch. |
+| `pendingAccountId` | ID of the account the live session still runs on while an in-place move is pending. It is `null` otherwise, including during Codex hand-offs to another agent. |
+| `movable` | True if the provider supports moving a conversation in place or the agent has no history yet. |
+
+On Paseo 0.16 and later, pass `metadata: {"zerosub.account": id}` at agent creation to request a starting account. ZeroSub reads the choice at creation and applies it if the account can take the agent.
+
+Consumers accept unknown `family` values and missing optional fields. The version increases only when a stable field is renamed, removed, or changes meaning.
+
+### The `zerosub-switch` timeline row
+
+ZeroSub records switch outcomes in the agent's timeline. The envelope has `type: "plugin"` and `kind: "zerosub-switch"`. Its `version` comes from `SWITCH_ROW_VERSION` (currently 1) and is independent of the RPC version. [SwitchRowSchema](shared/timeline.ts)
+
+These fields in the envelope's `data` have been stable since ZeroSub 1.0.0.
+
+| Field | Meaning |
+| --- | --- |
+| `family` | Provider family of the source agent. |
+| `from` | Display label of the source account, or `null` when unknown. |
+| `to` | Display label for the destination. It can be an account ID if the label is unavailable, or the provider name for an OpenCode fork. On a `stayed` row it may name the current account or an attempted destination. |
+| `toFamily` | Destination family for a continuation in another managed family, or `null` otherwise. |
+| `at` | ISO 8601 timestamp of the timeline event. |
+| `reason` | What prompted the switch or attempt, such as `limit`, `manual`, or `exhausted`. |
+| `outcome` | `switched`, `pending`, `continued`, `stayed` or `reset`. |
+| `resetsAt` | ISO 8601 timestamp when the relevant limit lifts, or `null` when unknown. |
+| `continuedIn` | A continuation reference with `agentId` and `title`, or `null`. Follow the reference whenever present, including on `stayed` rows. |
+| `continued` | `true` only means ZeroSub sent a follow-up. This can happen on an ordinary switch that keeps the same conversation. |
+
+Treat `detail` as display text only. A row with `reason: "exhausted"` and `outcome: "stayed"` means no eligible replacement account was available in the source family.
+
+Consumers accept unknown `reason` and `family` values and missing optional fields. The row version increases only when a stable field is renamed, removed, or changes meaning.
 
 ## Development
 
