@@ -988,7 +988,7 @@ describe("pacing", () => {
     expect(paceView(weekOnly(70, 5.5), 8, PNOW)).toMatchObject({ fiveHourProjected: 0, pendingFiveHour: 0 });
   });
 
-  it("leaves a weekly-held account to Up next ordering, not the 5-hour projection", () => {
+  it("places a 5-hour-held account ahead of a weekly-held one with no 5-hour window", () => {
     const readings: Record<string, Usage> = { "claude-max": pace(76.5, 4.5, 30, 3), "claude-ultra": weekOnly(95, 6) };
     expect(paceScore(readings["claude-max"], 0, PNOW)).toMatchObject({ gated: true, weekHeld: false });
     expect(paceScore(readings["claude-max"], 0, PNOW).fiveHour).toBeCloseTo(85, 5);
@@ -998,6 +998,20 @@ describe("pacing", () => {
     const upNext = mostAvailable(two, "claude", usageOf, PNOW)?.id;
     expect(upNext).toBe("claude-max");
     expect(mostAvailable(two, "claude", usageOf, PNOW, new Set(), null, false, { pendingOf: () => 0 })?.id).toBe(upNext);
+  });
+
+  it("places a new agent on the lowest 5-hour projection whatever order the accounts are stored in", () => {
+    const readings: Record<string, Usage> = { "claude-main": pace(61, 2, 50, 5), "claude-team": pace(25, 1.5, 30, 3), "claude-ultra": weekOnly(91, 6.5) };
+    const pending: Record<string, number> = { "claude-main": 0, "claude-team": 4, "claude-ultra": 0 };
+    const pacing = { pendingOf: (id: string) => pending[id] ?? 0 };
+    expect(paceScore(readings["claude-ultra"], 0, PNOW)).toMatchObject({ gated: false, weekHeld: true });
+    const ids = Object.keys(readings);
+    const orders = ids.flatMap((a) => ids.filter((b) => b !== a).map((b) => [a, b, ...ids.filter((c) => c !== a && c !== b)]));
+    expect(orders).toHaveLength(6);
+    for (const order of orders) {
+      const three = stateWith(order.map((id) => account({ id })), { defaults: { claude: "claude-main", codex: null, pi: null } });
+      expect(mostAvailable(three, "claude", (id) => readings[id], PNOW, new Set(), null, false, pacing)?.id).toBe("claude-team");
+    }
   });
 
   it("scores an account with no 5-hour or weekly window as unknown", () => {

@@ -270,9 +270,10 @@ function withPending(usage: Usage | null | undefined, pending: number): Usage | 
  * The usable account first in Up next, preferring the default, then the CLI login, on ties. Up next
  * puts an account at its short (5-hour) switch line, 80% by default, behind every account under it,
  * as `fiveHourGated` does, and one with a full window that caps it last. With `pacing` (balanced new
- * agents), an account its pending agents would carry past the 5-hour gate (`paceScore`), or one that
- * has used `WEEK_NEARLY_USED_PERCENT` of its week, goes behind every account that hasn't, before Up
- * next orders each group; a full window that caps an account still ranks it last, gate or not.
+ * agents), an account its pending agents would carry past the 5-hour gate (`paceScore`) goes behind
+ * every account that isn't, lowest 5-hour projection first, and one that has used
+ * `WEEK_NEARLY_USED_PERCENT` of its week goes behind those; Up next orders each group, and a full
+ * window that caps an account still ranks it last, gate or not.
  *
  * With `paidFallback` (the `paidApiFallback` preference), a usable paid API account (`isPaidStandIn`)
  * is chosen once no subscription account can stand in; without it, never.
@@ -305,17 +306,14 @@ export function mostAvailable(
   const tier = new Map(
     candidates.map((account) => {
       const pace = paces.get(account.id);
-      return [account.id, headroomScore(usageOf(account.id), now) >= 100 ? 2 : pace && (pace.gated || pace.weekHeld) ? 1 : 0];
+      return [account.id, headroomScore(usageOf(account.id), now) >= 100 ? 3 : pace?.weekHeld ? 2 : pace?.gated ? 1 : 0];
     }),
   );
-  // Among accounts held back on the 5-hour projection alone, the one its projected burn keeps furthest from
-  // the 5-hour wall goes first: raw used + pending ignores how fast an account is burning.
-  const fiveHourHeld = (account: StoredAccount) => {
-    const pace = paces.get(account.id);
-    return tier.get(account.id) === 1 && !!pace?.gated && !pace.weekHeld;
-  };
+  // Among accounts held back on the 5-hour projection, the one its projected burn keeps furthest from the
+  // 5-hour wall goes first: raw used + pending ignores how fast an account is burning. A weekly-held account
+  // goes after them: a 5-hour hold recovers within hours, a spent week locks the account out for days.
   const heldOrder = (a: StoredAccount, b: StoredAccount) =>
-    fiveHourHeld(a) && fiveHourHeld(b) ? paces.get(a.id)!.fiveHour - paces.get(b.id)!.fiveHour : 0;
+    tier.get(a.id) === 1 && tier.get(b.id) === 1 ? paces.get(a.id)!.fiveHour - paces.get(b.id)!.fiveHour : 0;
   const rank = (account: StoredAccount) => [
     pendingOf(account),
     account.id === preferred ? 0 : 1,
