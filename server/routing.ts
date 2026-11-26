@@ -198,7 +198,8 @@ export function paceScore(usage: Usage | null | undefined, pending: number, now:
   const fetched = Number.isFinite(parsed) ? Math.min(parsed, now) : now;
   const expired = (window: UsageWindow) => !!window.resetsAt && Date.parse(window.resetsAt) <= now;
 
-  let fiveHour = fiveCharge;
+  // No 5-hour window (Ultra has no 5-hour limit): pending agents can't carry the account to a wall it doesn't have.
+  let fiveHour = short ? fiveCharge : 0;
   if (short && Number.isFinite(short.usedPercent) && !expired(short)) {
     const reset = Date.parse(short.resetsAt ?? "");
     if (!Number.isFinite(reset)) fiveHour = short.usedPercent + fiveCharge;
@@ -300,13 +301,17 @@ export function mostAvailable(
   const ranks = new Map(
     candidates.map((account) => [account.id, upNextRank(withPending(usageOf(account.id), pendingOf(account)), now, lines ?? undefined)]),
   );
+  const paces = new Map(candidates.map((account) => [account.id, pacing ? paceScore(usageOf(account.id), pendingOf(account), now) : undefined]));
   const tier = new Map(
     candidates.map((account) => {
-      const usage = usageOf(account.id);
-      const pace = pacing ? paceScore(usage, pendingOf(account), now) : undefined;
-      return [account.id, headroomScore(usage, now) >= 100 ? 2 : pace && (pace.gated || pace.weekHeld) ? 1 : 0];
+      const pace = paces.get(account.id);
+      return [account.id, headroomScore(usageOf(account.id), now) >= 100 ? 2 : pace && (pace.gated || pace.weekHeld) ? 1 : 0];
     }),
   );
+  // Among held-back accounts, the one its projected burn keeps furthest from the 5-hour wall goes first:
+  // raw used + pending ignores how fast an account is burning.
+  const heldOrder = (a: StoredAccount, b: StoredAccount) =>
+    tier.get(a.id) === 1 && tier.get(b.id) === 1 ? paces.get(a.id)!.fiveHour - paces.get(b.id)!.fiveHour : 0;
   const rank = (account: StoredAccount) => [
     pendingOf(account),
     account.id === preferred ? 0 : 1,
@@ -314,7 +319,7 @@ export function mostAvailable(
     Date.parse(account.createdAt) || 0,
   ];
   candidates.sort((a, b) => {
-    const order = tier.get(a.id)! - tier.get(b.id)! || compareUpNext(ranks.get(a.id)!, ranks.get(b.id)!);
+    const order = tier.get(a.id)! - tier.get(b.id)! || heldOrder(a, b) || compareUpNext(ranks.get(a.id)!, ranks.get(b.id)!);
     if (order !== 0) return order;
     const left = rank(a);
     const right = rank(b);
