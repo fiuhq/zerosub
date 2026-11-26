@@ -984,6 +984,22 @@ describe("pacing", () => {
     expect(mostAvailable(two, "claude", (id) => readings[id], PNOW, new Set(), null, false, pacing)?.id).toBe("claude-team");
   });
 
+  it("reports no 5-hour pending use on the card for a weekly-only account", () => {
+    expect(paceView(weekOnly(70, 5.5), 8, PNOW)).toMatchObject({ fiveHourProjected: 0, pendingFiveHour: 0 });
+  });
+
+  it("leaves a weekly-held account to Up next ordering, not the 5-hour projection", () => {
+    const readings: Record<string, Usage> = { "claude-max": pace(76.5, 4.5, 30, 3), "claude-ultra": weekOnly(95, 6) };
+    expect(paceScore(readings["claude-max"], 0, PNOW)).toMatchObject({ gated: true, weekHeld: false });
+    expect(paceScore(readings["claude-max"], 0, PNOW).fiveHour).toBeCloseTo(85, 5);
+    expect(paceScore(readings["claude-ultra"], 0, PNOW)).toMatchObject({ fiveHour: 0, gated: false, weekHeld: true });
+    const two = stateWith(Object.keys(readings).map((id) => account({ id })), { defaults: { claude: "claude-ultra", codex: null, pi: null } });
+    const usageOf = (id: string) => readings[id];
+    const upNext = mostAvailable(two, "claude", usageOf, PNOW)?.id;
+    expect(upNext).toBe("claude-max");
+    expect(mostAvailable(two, "claude", usageOf, PNOW, new Set(), null, false, { pendingOf: () => 0 })?.id).toBe(upNext);
+  });
+
   it("scores an account with no 5-hour or weekly window as unknown", () => {
     const odd: Usage = { ...pace(0, 1, 0, 1), windows: [{ id: "weekly_opus", label: "Weekly - Opus", usedPercent: 10, resetsAt: null }] };
     expect(paceScore(odd, 1, PNOW)).toMatchObject({ fiveHour: 60, weekly: 0, score: 60 });

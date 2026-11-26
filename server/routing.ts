@@ -245,7 +245,7 @@ export function paceView(usage: Usage | null | undefined, pending: number, now: 
   return {
     fiveHourUsed: used(short),
     fiveHourProjected: pace.fiveHour,
-    pendingFiveHour: PENDING_FIVE_HOUR_PERCENT * pending,
+    pendingFiveHour: !short && long ? 0 : PENDING_FIVE_HOUR_PERCENT * pending,
     weeklyUsed: used(long),
     pendingWeekly: PENDING_WEEKLY_PERCENT * pending,
     weekElapsed,
@@ -308,10 +308,14 @@ export function mostAvailable(
       return [account.id, headroomScore(usageOf(account.id), now) >= 100 ? 2 : pace && (pace.gated || pace.weekHeld) ? 1 : 0];
     }),
   );
-  // Among held-back accounts, the one its projected burn keeps furthest from the 5-hour wall goes first:
-  // raw used + pending ignores how fast an account is burning.
+  // Among accounts held back on the 5-hour projection alone, the one its projected burn keeps furthest from
+  // the 5-hour wall goes first: raw used + pending ignores how fast an account is burning.
+  const fiveHourHeld = (account: StoredAccount) => {
+    const pace = paces.get(account.id);
+    return tier.get(account.id) === 1 && !!pace?.gated && !pace.weekHeld;
+  };
   const heldOrder = (a: StoredAccount, b: StoredAccount) =>
-    tier.get(a.id) === 1 && tier.get(b.id) === 1 ? paces.get(a.id)!.fiveHour - paces.get(b.id)!.fiveHour : 0;
+    fiveHourHeld(a) && fiveHourHeld(b) ? paces.get(a.id)!.fiveHour - paces.get(b.id)!.fiveHour : 0;
   const rank = (account: StoredAccount) => [
     pendingOf(account),
     account.id === preferred ? 0 : 1,
