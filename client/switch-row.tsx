@@ -29,6 +29,8 @@ function cause(row: SwitchRow): string | null {
       return `A ${FAMILY_LABEL[row.family]} subscription account has room again, so this agent leaves ${from}, a paid API.`;
     case "pacing":
       return `${from} is close to its 5-hour limit.`;
+    case "near_limit":
+      return `${from} is nearly at its usage limit.`;
     default:
       return null;
   }
@@ -93,7 +95,8 @@ export function describeRow(row: SwitchRow): string {
         row.reason === "disabled" ||
         row.reason === "early" ||
         row.reason === "room" ||
-        row.reason === "pacing";
+        row.reason === "pacing" ||
+        row.reason === "near_limit";
       const from = row.from && !hidesFrom ? `from ${row.from} ` : "";
       const place = row.sameConversation ? " in this conversation" : "";
       return `${lead}Switched ${from}to ${row.to}${place}${row.continued ? " and carried on" : ""}.${row.detail ? ` ${row.detail}` : ""}`;
