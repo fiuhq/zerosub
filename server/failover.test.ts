@@ -6642,6 +6642,16 @@ describe("a move asked for before the limit", () => {
     }
   });
 
+  it("refuses an account set aside for another project", async () => {
+    const run = await setUp(nearly({
+      sessions: { [AGENT]: { accountId: MAIN, family: "claude" as const, openedAt: new Date().toISOString(), projectId: "mine" } },
+      projects: [{ projectId: "theirs", accountId: HELLO, name: null }],
+    }), unused);
+    expect(await run.service.moveBeforeLimit(run.paseo as never, AGENT, HELLO)).toMatchObject({ outcome: "refused", reason: "ineligible_target", accountId: MAIN });
+    expect(run.reopened).toEqual([]);
+    expect((await run.store.read()).bindings[AGENT]).toBeUndefined();
+  });
+
   it("refuses an account that can't take it, a closed agent, one the user pinned, and automatic switching off", async () => {
     const limited = await setUp(nearly({ accounts: [account(MAIN, "main", "main"), { ...account(HELLO, "seat", "managed"), limitedUntil: inFuture() }] as never }), unused);
     expect(await limited.service.moveBeforeLimit(limited.paseo as never, AGENT, HELLO)).toMatchObject({ outcome: "refused", reason: "ineligible_target" });

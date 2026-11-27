@@ -1168,9 +1168,11 @@ export class Service {
         model: config.model,
         usageOf: (id) => this.usage.get(id),
         pendingOf: (id) => this.pendingOn(id, now),
+        early: this.early,
+        paidApi: this.prefs.paidApiFallback,
       };
       const route = chooseAccount(state, input);
-      if (this.prefs.balanceNewAgents && route?.bind?.source !== "user" && accountsOf(state, "codex").some(
+      if ((this.prefs.balanceNewAgents || state.projects.length > 0) && route?.bind?.source !== "user" && accountsOf(state, "codex").some(
         (account) => account.signedIn && !account.disabled && !canUse(account),
       )) return undefined;
       accounts = [route?.account, chooseAccount(state, { ...input, allowNextPick: true })?.account];
@@ -5319,7 +5321,7 @@ export class Service {
     // A limit of one model's window rules an account out only for agents on that model.
     await withTimeout(this.modelOf(paseo, agentId), 3_000);
     // Only where routing could move the agent by itself: no API key or paid stand-in, under every quota maximum.
-    if (!target || target.family !== family || !canStandIn(target, now, this.agentModels.get(agentId), this.usage.get(target.id)) || isPaidStandIn(target, this.prefs.paidApiFallback)) {
+    if (!target || target.family !== family || !canStandIn(target, now, this.agentModels.get(agentId), this.usage.get(target.id)) || isPaidStandIn(target, this.prefs.paidApiFallback) || this.reserved(state, agentId).has(target.id)) {
       return reply("refused", "ineligible_target", "That account can't take it now.");
     }
     if (current === target.id) return reply("already", null, null);
