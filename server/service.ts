@@ -1172,7 +1172,7 @@ export class Service {
         paidApi: this.prefs.paidApiFallback,
       };
       const route = chooseAccount(state, input);
-      if ((this.prefs.balanceNewAgents || state.projects.length > 0) && route?.bind?.source !== "user" && accountsOf(state, "codex").some(
+      if ((this.prefs.balanceNewAgents || state.projects.some((rule) => findAccount(state, rule.accountId)?.family === "codex")) && route?.bind?.source !== "user" && accountsOf(state, "codex").some(
         (account) => account.signedIn && !account.disabled && !canUse(account),
       )) return undefined;
       accounts = [route?.account, chooseAccount(state, { ...input, allowNextPick: true })?.account];

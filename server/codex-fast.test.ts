@@ -132,6 +132,17 @@ describe("temporary Fast mode for one ChatGPT account", () => {
     expect(listControls).not.toHaveBeenCalled();
   });
 
+  it("still sets Fast when only another provider's account is set aside for a project", async () => {
+    const { service, context, request, store } = await setUp();
+    await store.update((draft) => {
+      draft.accounts.push(StoredAccountSchema.parse({ id: "claude-reserved", family: "claude", kind: "managed", label: "claude", home: join(root, "claude"), createdAt: new Date().toISOString() }));
+      draft.projects = [{ projectId: "project", accountId: "claude-reserved", name: null }];
+    });
+    await expect(service.onAgentCreate(request, context)).resolves.toMatchObject({
+      config: { providerOptions: { service_tier: "fast" } },
+    });
+  });
+
   it("leaves models without a Fast choice alone at creation and while open", async () => {
     const { service, context, request, listControls, setOptions, setMetadata } = await setUp([
       live("unsupported", { controls: [] }), live("supported"),
