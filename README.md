@@ -559,7 +559,7 @@ Call `zerosub.agents.move_before_limit` on the `zerosub` plugin to move one agen
 | `auto_switch_off` | no | Automatic switching is off in ZeroSub. |
 | `not_open` | no | The agent is closed, archived or gone. |
 | `unsupported_provider` | no | Its conversation can't move in place: Codex, Grok, Cursor and Antigravity agents, even one whose `zerosub.state` row says `movable` because it has no history yet. Only Claude and Pi agents move. |
-| `ineligible_target` | no | The account is missing, of another provider, an API key or paid stand-in (with or without paid API fallback), signed out, disabled, at its limit or at a quota maximum. Also returned when the account reached its limit while the agent reloaded, so routing kept the agent where it was. |
+| `ineligible_target` | no | The account is missing, of another provider, an API key or paid stand-in (with or without paid API fallback), signed out, disabled, at its limit, at a quota maximum, or set aside for another project. Also returned when the account reached its limit while the agent reloaded, so routing kept the agent where it was. |
 | `user_pinned` | no | The agent is pinned by the user, by `zerosub.agents.account`, or by `metadata["zerosub.account"]` at creation (that request pins a portable agent too). Release it with `zerosub.agents.account` and `accountId: null` first. |
 | `landed_elsewhere` | no | The reload worked, but routing opened the agent on another account, which `accountId` names. |
 
