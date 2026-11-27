@@ -220,6 +220,8 @@ async function setUp(model: string, siblingModels: string[] = [], options: { rea
       locate: async () => "/usr/local/bin/paseo",
       reopen: async (id: string) => {
         reopened.push(id);
+        // A reload lands once Paseo opens the agent's new session, as upstream's failover tests have it.
+        await service.onSessionOpen({ agentId: id, provider: "opencode", reason: "refresh", purpose: "interactive", env: {} } as never, context);
         return { ok: true as const };
       },
     } as unknown as Reopener,
